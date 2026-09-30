@@ -43,7 +43,7 @@ edition = "2021"
 # which is how the 1.82 claim became false in the first place.
 rust-version = "1.88"
 license = "Apache-2.0"
-repository = "https://github.com/yurisismotto/omnibridge"
+repository = "https://github.com/yurisismotto/pliwee"
 
 # NOTE (Wave 0, ARCH-010): there is deliberately no `[workspace.lints]` table.
 #

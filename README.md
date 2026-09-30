@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="docs/design/assets/omnibridge-mark.svg" alt="OmniBridge logo" width="120">
+  <img src="docs/design/assets/pliwee-mark.svg" alt="Pliwee logo" width="120">
 </p>
 
-<h1 align="center">OmniBridge</h1>
+<h1 align="center">Pliwee</h1>
 
-<p align="center"><strong>One bridge. Any device.</strong></p>
+<p align="center"><strong>One flow. Any device.</strong></p>
 
 <p align="center">
   Send files, share your clipboard, mirror notifications and see your phone's
@@ -13,80 +13,83 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/yurisismotto/OmniBridge/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/yurisismotto/OmniBridge?label=release"></a>
+  <a href="https://github.com/yurisismotto/pliwee/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/yurisismotto/pliwee?label=release"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <img alt="Platforms: Linux and Android" src="https://img.shields.io/badge/platforms-Linux%20%7C%20Android-4F6BFF">
 </p>
 
 <p align="center">
-  <a href="#install-omnibridge">Install</a> ·
+  <a href="#install-pliwee">Install</a> ·
   <a href="#getting-started">Getting started</a> ·
-  <a href="#what-omnibridge-does">Features</a> ·
+  <a href="#what-pliwee-does">Features</a> ·
   <a href="#known-limitations">Known limitations</a> ·
   <a href="#verifying-a-release-download">Verify downloads</a> ·
   <a href="#documentation">Documentation</a>
 </p>
 
-> **OmniBridge is being renamed Pliwee** ([ADR-0020](docs/adr/ADR-0020-rename-to-pliwee.md)).
-> *Note added 2026-09-25.* The **published** release is still OmniBridge
-> v1.0.0, and the install, verify and command-line sections below describe
-> that release as it was published. The **source tree** on this branch
-> already builds Pliwee 1.1.0 (not yet released): the binaries are `pliwee`,
-> `pliweed` and `pliwee-gui`, the user unit is `pliweed.service`, and received
-> files go to `<XDG downloads>/Pliwee`. *Build from source* and *Repository
-> layout* describe the tree. Release URLs and the verification key move when
-> Pliwee is published.
+> **Pliwee was called OmniBridge** until its v1.0.0 Linux release. An existing
+> OmniBridge 1.0.0 install upgrades in place with your distribution's normal
+> upgrade command, through the transitional `omnibridge` packages, and keeps its
+> identity, pairings, grants, policies and the desktop app's device choice. See
+> [Upgrading from OmniBridge](packaging/common/README.md#upgrading-from-omnibridge)
+> and [ADR-0020](docs/adr/ADR-0020-rename-to-pliwee.md).
 
-## Install OmniBridge
+## Install Pliwee
 
-OmniBridge for Linux is distributed as packages attached to its
-**[GitHub Releases](https://github.com/yurisismotto/OmniBridge/releases/latest)**.
+Pliwee for Linux is distributed as packages attached to its
+**[GitHub Releases](https://github.com/yurisismotto/pliwee/releases/latest)**.
 There is no apt or dnf repository yet: you download the two packages for your
 distribution and install them with your package manager.
 
 Every release has two packages:
 
-* **`omnibridge`** — the background service (`omnibridged`) and the
-  `omnibridge` command-line tool;
-* **`omnibridge-gui`** — the OmniBridge desktop application. It requires the
-  exact same version of `omnibridge`, so install both together.
+* **`pliwee`** — the background service (`pliweed`) and the
+  `pliwee` command-line tool;
+* **`pliwee-gui`** — the Pliwee desktop application. It requires the
+  exact same version of `pliwee`, so install both together.
 
-The commands below are for **OmniBridge v1.0.0**, the current release, on
+The commands below are for **Pliwee v1.1.0**, the current release, on
 x86_64. Want to check the files before installing them? See
 [Verifying a release download](#verifying-a-release-download).
+
+**Upgrading from OmniBridge 1.0.0?** Also download the transitional packages
+from the same release — `omnibridge-1.1.0-1.fc44.noarch.rpm` on Fedora;
+`<distro>-omnibridge_1.1.0-1_all.deb` and `<distro>-omnibridge-gui_1.1.0-1_all.deb`
+on Ubuntu and Debian — and install them in the same `dnf`/`apt` command as the
+two packages below.
 
 ### Fedora
 
 The RPMs are built on Fedora 44.
 
 ```bash
-curl -fLO https://github.com/yurisismotto/OmniBridge/releases/download/v1.0.0/omnibridge-1.0.0-1.fc44.x86_64.rpm
-curl -fLO https://github.com/yurisismotto/OmniBridge/releases/download/v1.0.0/omnibridge-gui-1.0.0-1.fc44.x86_64.rpm
-sudo dnf install ./omnibridge-1.0.0-1.fc44.x86_64.rpm ./omnibridge-gui-1.0.0-1.fc44.x86_64.rpm
+curl -fLO https://github.com/yurisismotto/pliwee/releases/download/v1.1.0/pliwee-1.1.0-1.fc44.x86_64.rpm
+curl -fLO https://github.com/yurisismotto/pliwee/releases/download/v1.1.0/pliwee-gui-1.1.0-1.fc44.x86_64.rpm
+sudo dnf install ./pliwee-1.1.0-1.fc44.x86_64.rpm ./pliwee-gui-1.1.0-1.fc44.x86_64.rpm
 ```
 
 ### Ubuntu 24.04 LTS
 
 ```bash
-curl -fLO https://github.com/yurisismotto/OmniBridge/releases/download/v1.0.0/ubuntu2404-omnibridge_1.0.0-1_amd64.deb
-curl -fLO https://github.com/yurisismotto/OmniBridge/releases/download/v1.0.0/ubuntu2404-omnibridge-gui_1.0.0-1_amd64.deb
-sudo apt install ./ubuntu2404-omnibridge_1.0.0-1_amd64.deb ./ubuntu2404-omnibridge-gui_1.0.0-1_amd64.deb
+curl -fLO https://github.com/yurisismotto/pliwee/releases/download/v1.1.0/ubuntu2404-pliwee_1.1.0-1_amd64.deb
+curl -fLO https://github.com/yurisismotto/pliwee/releases/download/v1.1.0/ubuntu2404-pliwee-gui_1.1.0-1_amd64.deb
+sudo apt install ./ubuntu2404-pliwee_1.1.0-1_amd64.deb ./ubuntu2404-pliwee-gui_1.1.0-1_amd64.deb
 ```
 
 ### Ubuntu 26.04 LTS
 
 ```bash
-curl -fLO https://github.com/yurisismotto/OmniBridge/releases/download/v1.0.0/ubuntu2604-omnibridge_1.0.0-1_amd64.deb
-curl -fLO https://github.com/yurisismotto/OmniBridge/releases/download/v1.0.0/ubuntu2604-omnibridge-gui_1.0.0-1_amd64.deb
-sudo apt install ./ubuntu2604-omnibridge_1.0.0-1_amd64.deb ./ubuntu2604-omnibridge-gui_1.0.0-1_amd64.deb
+curl -fLO https://github.com/yurisismotto/pliwee/releases/download/v1.1.0/ubuntu2604-pliwee_1.1.0-1_amd64.deb
+curl -fLO https://github.com/yurisismotto/pliwee/releases/download/v1.1.0/ubuntu2604-pliwee-gui_1.1.0-1_amd64.deb
+sudo apt install ./ubuntu2604-pliwee_1.1.0-1_amd64.deb ./ubuntu2604-pliwee-gui_1.1.0-1_amd64.deb
 ```
 
 ### Debian 13 (trixie)
 
 ```bash
-curl -fLO https://github.com/yurisismotto/OmniBridge/releases/download/v1.0.0/debian13-omnibridge_1.0.0-1_amd64.deb
-curl -fLO https://github.com/yurisismotto/OmniBridge/releases/download/v1.0.0/debian13-omnibridge-gui_1.0.0-1_amd64.deb
-sudo apt install ./debian13-omnibridge_1.0.0-1_amd64.deb ./debian13-omnibridge-gui_1.0.0-1_amd64.deb
+curl -fLO https://github.com/yurisismotto/pliwee/releases/download/v1.1.0/debian13-pliwee_1.1.0-1_amd64.deb
+curl -fLO https://github.com/yurisismotto/pliwee/releases/download/v1.1.0/debian13-pliwee-gui_1.1.0-1_amd64.deb
+sudo apt install ./debian13-pliwee_1.1.0-1_amd64.deb ./debian13-pliwee-gui_1.1.0-1_amd64.deb
 ```
 
 The Ubuntu and Debian packages share the same file names inside the
@@ -95,35 +98,35 @@ distribution, so the release prefixes each one with its target
 distribution — they are built separately for each one.
 
 > **Firewall.** Fedora Workstation, Ubuntu and Debian need nothing by default.
-> If you have turned on a firewall yourself, OmniBridge needs TCP port 55432
+> If you have turned on a firewall yourself, Pliwee needs TCP port 55432
 > and mDNS: see [Fedora](packaging/fedora/README.md#firewall) or, with `ufw`,
 > `sudo ufw allow 55432/tcp` and `sudo ufw allow mdns`.
 
 ### Android companion app
 
-**You need the OmniBridge Android app on your phone** — every feature works
+**You need the Pliwee Android app on your phone** — every feature works
 between a paired phone and computer.
 
-**The Android app is not on Google Play yet**, and the v1.0.0 release does not
+**The Android app is not on Google Play yet**, and the v1.1.0 release does not
 include an Android APK. For now it has to be built from source; see
 [Running on Android](#running-on-android). Publishing it through Google Play is
 the next step, and this is where the link will appear.
 
 ## Getting started
 
-1. **Install OmniBridge on Linux** — see [Install OmniBridge](#install-omnibridge).
-2. **Start the OmniBridge service.** The packages install it switched off, so
+1. **Install Pliwee on Linux** — see [Install Pliwee](#install-pliwee).
+2. **Start the Pliwee service.** The packages install it switched off, so
    nothing listens on your network until you choose. Turn it on for your user
    (no root needed); it will then start on its own every time you log in:
 
    ```bash
-   systemctl --user enable --now omnibridged.service
+   systemctl --user enable --now pliweed.service
    ```
 
 3. **Install and open the Android app** on your phone — see
    [Android companion app](#android-companion-app).
-4. **Pair the two devices.** Open **OmniBridge** from your applications menu
-   and choose **Pair device**, or run `omnibridge pair` in a terminal. A QR
+4. **Pair the two devices.** Open **Pliwee** from your applications menu
+   and choose **Pair device**, or run `pliwee pair` in a terminal. A QR
    code appears; in the Android app, tap **Pair device** and scan it. The
    computer then shows the phone's fingerprint — **check it matches the
    phone's screen**, and accept.
@@ -131,21 +134,21 @@ the next step, and this is where the link will appear.
 5. **Grant only what you want.** A newly paired device can do nothing yet.
    Allow files, clipboard or battery for that phone on the desktop app's
    **Devices** page (open the phone's **Details and controls**), or with
-   `omnibridge grant <device> <capability>`.
-   Notification mirroring needs both ends: on the phone, give OmniBridge
+   `pliwee grant <device> <capability>`.
+   Notification mirroring needs both ends: on the phone, give Pliwee
    Android's notification access, turn sharing on for this computer and pick
    the apps; on the desktop, switch on **Receive notifications from this
    device** for that phone on the **Notifications** page.
-6. **Use it.** Share a file to OmniBridge from any Android app, send files from
+6. **Use it.** Share a file to Pliwee from any Android app, send files from
    the desktop, send your clipboard, and watch notifications and battery level
-   arrive. `omnibridge status` shows what is running and connected.
+   arrive. `pliwee status` shows what is running and connected.
 
-## What OmniBridge does
+## What Pliwee does
 
 | | What you get |
 | --- | --- |
-| **Files** | Send a file from your phone with Android's **Share** menu, or from your computer. Received files land in your Downloads folder, under `OmniBridge`, and an existing file is never overwritten. |
-| **Clipboard** | Copy on your computer, paste on your phone — automatically, if you turn that on for a device. Going the other way is a deliberate tap: **Send clipboard** in the app, the Quick Settings tile, or sharing text to OmniBridge. |
+| **Files** | Send a file from your phone with Android's **Share** menu, or from your computer. Received files land in your Downloads folder, under `Pliwee`, and an existing file is never overwritten. |
+| **Clipboard** | Copy on your computer, paste on your phone — automatically, if you turn that on for a device. Going the other way is a deliberate tap: **Send clipboard** in the app, the Quick Settings tile, or sharing text to Pliwee. |
 | **Notifications** | Mirror your phone's notifications to your desktop and dismiss them from either side. Off until you turn it on, and then only for the apps you pick. |
 | **Battery and device information** | See your phone's battery level on the desktop. |
 | **Secure local pairing** | Pair by scanning a QR code and confirming a fingerprint. Devices talk only to each other, over your local network, encrypted end to end. |
@@ -153,7 +156,7 @@ the next step, and this is where the link will appear.
 **About the clipboard, precisely.** Desktop → Android can be automatic (opt-in,
 per device); Android → desktop is always a manual action. That is not a design
 shortcut: Android 10 and later refuse to let a background app read the
-clipboard, and OmniBridge uses none of the tricks that get around that. It is
+clipboard, and Pliwee uses none of the tricks that get around that. It is
 **not** an unrestricted, automatic two-way clipboard, and it does not claim to
 be. Details: [docs/architecture/CLIPBOARD.md](docs/architecture/CLIPBOARD.md).
 
@@ -190,7 +193,7 @@ What "runtime certified" covers, and what it does not, is in
 ## Security and privacy
 
 * **Local-first.** Your devices talk directly to each other over your local
-  network. There is no OmniBridge server, no account and no telemetry.
+  network. There is no Pliwee server, no account and no telemetry.
 * **Encrypted and authenticated.** Every connection uses TLS 1.3 with mutual
   authentication; each device is identified by its own public key, pinned at
   pairing time.
@@ -209,14 +212,14 @@ The full model is in [Security](#security) below and in
 
 * **Widening a capability grant takes effect on the next connection.** A
   session's effective capability set is fixed at handshake time, so after
-  `omnibridge grant … files.v1` the phone must reconnect. *Narrowing* is
+  `pliwee grant … files.v1` the phone must reconnect. *Narrowing* is
   immediate, including against a transfer already running — the asymmetry
   fails in the safe direction, but it is a rough edge.
 * **No resume.** A transfer interrupted by a disconnect fails and its partial
   file is deleted. The receiver already knows the expected size and digest, so
   resume is tractable, but it needs durable partial state that this version
   deliberately does not keep.
-* **One file per share.** `ACTION_SEND_MULTIPLE` is registered so OmniBridge
+* **One file per share.** `ACTION_SEND_MULTIPLE` is registered so Pliwee
   appears for multi-select, but only the first item is sent.
 * The trust store's persistence path is not covered by the local JVM unit
   tests: it needs a real `Context` and `filesDir`. Its pure logic is tested,
@@ -225,7 +228,7 @@ The full model is in [Security](#security) below and in
   Android 10+ refuses clipboard reads to an app without input focus, and every
   way around it is forbidden or user-hostile. Android → desktop is a deliberate
   action: the Send clipboard button, the Quick Settings tile, or sharing text
-  to OmniBridge. Verified on an SM-X620 (Android 16): background read REFUSED,
+  to Pliwee. Verified on an SM-X620 (Android 16): background read REFUSED,
   focused read ALLOWED, background `setPrimaryClip` APPLIED.
 * **Sending the desktop clipboard needs a session that can read it, and some
   cannot.** Reading a selection this process does not own requires either the
@@ -235,7 +238,7 @@ The full model is in [Security](#security) below and in
   trixie**, where it does not. Both automatic *and* manual sending are affected,
   because both read the selection the same way. **Receiving a clipboard from the
   phone is unaffected** on every distribution: writing a clip needs no such
-  protocol. `omnibridge clipboard status` reports `auto-send`, `manual send` and
+  protocol. `pliwee clipboard status` reports `auto-send`, `manual send` and
   `receiving` separately, so the answer for your session is printed rather than
   guessed.
 * **The desktop clipboard also needs an unlocked session.** On GNOME Wayland,
@@ -248,21 +251,21 @@ The full model is in [Security](#security) below and in
   phone marks as a password or other secret is written with `wl-copy
   --sensitive`, which tells clipboard managers to keep it out of their
   history. That option arrived in wl-clipboard 2.3.0, and Ubuntu 24.04,
-  Ubuntu 26.04 and Debian 13 all ship 2.2.1 — so on those three, **OmniBridge
+  Ubuntu 26.04 and Debian 13 all ship 2.2.1 — so on those three, **Pliwee
   refuses such a clip rather than writing it unmarked**, because an unmarked
   password silently persisted in a history file is the worse outcome. Ordinary
-  clipboard sharing is unaffected. `omnibridge clipboard status` and the GUI's
+  clipboard sharing is unaffected. `pliwee clipboard status` and the GUI's
   clipboard page both say so up front rather than at the moment a password
-  fails to arrive. OmniBridge decides this by asking `wl-copy --help` for the
+  fails to arrive. Pliwee decides this by asking `wl-copy --help` for the
   option, never by reading its version — Fedora's `2.2.1^git…` has the flag
   and Debian's `2.2.1` does not, with the same version string.
 * **Clipboard auto-send needs a compositor that can report clipboard changes.**
-  GNOME implements neither wlr- nor ext-data-control, so OmniBridge watches via
+  GNOME implements neither wlr- nor ext-data-control, so Pliwee watches via
   XFIXES on the Xwayland `CLIPBOARD` selection instead (ADR-0014). Without a
   reachable Xwayland there is no watcher — and, as the bullet above says,
   **no manual send either**, because both read the selection the same way.
   This bullet used to claim auto-send "degrades to manual sending"; it does
-  not, and `omnibridge clipboard status` now reports the two separately
+  not, and `pliwee clipboard status` now reports the two separately
   instead of inferring one from the other.
 * **Sending a file or a clipboard from the phone to the desktop is not yet
   certified end to end on hardware**, on any distribution, because driving it
@@ -277,7 +280,7 @@ The full model is in [Security](#security) below and in
 
 ## Verifying a release download
 
-Every OmniBridge release ships a `SHA256SUMS` covering all fourteen artifacts,
+Every Pliwee release ships a `SHA256SUMS` covering all its artifacts,
 and a detached OpenPGP signature over that manifest. Checking the signature
 first and the digests second is the only order that helps: checking digests
 first is checking a download against itself.
@@ -286,7 +289,7 @@ first is checking a download against itself.
 maintainer's email does:
 
 ```
-OmniBridge Release Signing Key
+Pliwee Release Signing Key
 primary  F545DC184E909192C3FB6F6E64963019E731BE07
 ```
 
@@ -295,14 +298,17 @@ The primary is **certify-only**; releases are signed by its `sign`-only subkey
 against the **primary** fingerprint above — that is the long-term anchor, and
 the verifier resolves the subkey for you.
 
+This is the same key that signed OmniBridge v1.0.0; it still carries its
+`OmniBridge Release Signing Key` identity alongside the Pliwee one.
+
 **Where the key is.** The armoured public key is published as a **release
-asset**, `omnibridge-release-pubkey.asc`, attached to every release. It is
+asset**, `pliwee-release-pubkey.asc`, attached to every release. It is
 deliberately **not** kept in this repository: a key checked into the tree it
 signs adds nothing a release asset does not already give you, and it invites
 the mistake of trusting a key because it sits next to the code.
 
 ```
-https://github.com/yurisismotto/OmniBridge/releases/latest/download/omnibridge-release-pubkey.asc
+https://github.com/yurisismotto/pliwee/releases/latest/download/pliwee-release-pubkey.asc
 ```
 
 That URL always resolves to the newest release's copy; a specific release's
@@ -312,15 +318,15 @@ replaced. The fingerprint printed above is what makes the check mean
 something, so compare it every time.
 
 **What to verify.** The release directory is the bundle
-`omnibridge-<version>-linux-x86_64.tar.gz` from the release page, extracted: it
+`pliwee-<version>-linux-x86_64.tar.gz` from the release page, extracted: it
 holds every artifact in the layout `SHA256SUMS` describes, with `SHA256SUMS`
 and `SHA256SUMS.asc` beside them. `verify-release.sh` is in this repository and
 in the source tarball.
 
 ```bash
 # 1. import the published public key into a keyring of its own
-curl -fsSLO https://github.com/yurisismotto/OmniBridge/releases/latest/download/omnibridge-release-pubkey.asc
-gpg --homedir ./ob-verify --import omnibridge-release-pubkey.asc
+curl -fsSLO https://github.com/yurisismotto/pliwee/releases/latest/download/pliwee-release-pubkey.asc
+gpg --homedir ./ob-verify --import pliwee-release-pubkey.asc
 gpg --homedir ./ob-verify --export > ob-release.gpg
 
 # and check it is the identity above before trusting it
@@ -339,14 +345,18 @@ not a skip, because anyone who can substitute an artifact can also delete the
 signature. `--allow-unsigned` exists, says exactly what it is not checking, and
 reports its result as `CHECKED (UNSIGNED)`.
 
+The OmniBridge v1.0.0 downloads stay where they were published,
+[`yurisismotto/OmniBridge` v1.0.0](https://github.com/yurisismotto/OmniBridge/releases/tag/v1.0.0),
+and verify the same way against the same fingerprint.
+
 The releases also carry SLSA build provenance, which is a different claim and
 not a substitute:
 
 ```bash
-gh attestation verify <artifact> -R yurisismotto/OmniBridge
+gh attestation verify <artifact> -R yurisismotto/pliwee
 ```
 
-Provenance answers *"was this built by OmniBridge's CI, from which commit?"*.
+Provenance answers *"was this built by Pliwee's CI, from which commit?"*.
 The signature answers *"does the maintainer stand behind this release?"*. A
 green provenance check is not a maintainer signature.
 
@@ -451,16 +461,12 @@ Needs JDK 21 and Android SDK platform 35. See
 
 ## Command-line reference
 
-These are the commands of the published OmniBridge v1.0.0. In a build of this
-source tree the command is `pliwee` (for example `pliwee pair`), the daemon is
-`pliweed`, and received files land in `<XDG downloads>/Pliwee`.
-
 ```bash
-omnibridge status              # identity, port, capabilities, live connections
-omnibridge pair                # opens a pairing window and prints a QR code
-omnibridge devices             # paired devices
-omnibridge ping <device>       # round-trip over the live session
-omnibridge unpair <device>     # revoke; takes effect immediately
+pliwee status              # identity, port, capabilities, live connections
+pliwee pair                # opens a pairing window and prints a QR code
+pliwee devices             # paired devices
+pliwee ping <device>       # round-trip over the live session
+pliwee unpair <device>     # revoke; takes effect immediately
 ```
 
 File transfer is a separately granted capability and is **never** granted
@@ -468,14 +474,14 @@ automatically — writing a file to your disk is a side effect
 ([ADR-0008](docs/adr/ADR-0008-capability-architecture.md)):
 
 ```bash
-omnibridge grant <device> files.v1     # allow file transfer with this device
-omnibridge send <device> ~/photo.jpg   # offer a file; streams progress
-omnibridge transfers                   # everything since the daemon started
-omnibridge cancel <transfer-prefix>    # stop one mid-flight
-omnibridge revoke <device> files.v1    # withdraw; stops transfers already running
+pliwee grant <device> files.v1     # allow file transfer with this device
+pliwee send <device> ~/photo.jpg   # offer a file; streams progress
+pliwee transfers                   # everything since the daemon started
+pliwee cancel <transfer-prefix>    # stop one mid-flight
+pliwee revoke <device> files.v1    # withdraw; stops transfers already running
 ```
 
-Received files land in `<XDG downloads>/OmniBridge`. An existing name is never
+Received files land in `<XDG downloads>/Pliwee`. An existing name is never
 overwritten — `photo.jpg` becomes `photo (1).jpg`. See
 [docs/architecture/FILES.md](docs/architecture/FILES.md).
 
@@ -483,13 +489,13 @@ Clipboard sharing is likewise never granted automatically — a device that can
 write your clipboard can also see what you paste next:
 
 ```bash
-omnibridge grant <device> clipboard.v1        # allow clipboard sharing
-omnibridge clipboard status                   # what works here, and per-device policy
-omnibridge clipboard send <device>            # send the current clipboard, now
-omnibridge clipboard send <device> --sensitive  # ask the phone to mark it sensitive
-omnibridge clipboard apply <device>           # apply a clip that is waiting
-omnibridge clipboard auto-send <device> on    # push every local copy to that device
-omnibridge clipboard auto-receive <device> on # apply its clips as they arrive
+pliwee grant <device> clipboard.v1        # allow clipboard sharing
+pliwee clipboard status                   # what works here, and per-device policy
+pliwee clipboard send <device>            # send the current clipboard, now
+pliwee clipboard send <device> --sensitive  # ask the phone to mark it sensitive
+pliwee clipboard apply <device>           # apply a clip that is waiting
+pliwee clipboard auto-send <device> on    # push every local copy to that device
+pliwee clipboard auto-receive <device> on # apply its clips as they arrive
 ```
 
 Granting is one decision; automation is another. A freshly granted device can
@@ -500,7 +506,7 @@ is never written to disk and never logged, at any level. See
 [docs/architecture/CLIPBOARD.md](docs/architecture/CLIPBOARD.md).
 
 The daemon has no terminal, so it cannot prompt: it **declines** incoming
-files and logs why. `omnibridged --accept-files-without-asking` is the documented
+files and logs why. `pliweed --accept-files-without-asking` is the documented
 escape hatch for an unattended test rig.
 
 `<device>` is a device id or a fingerprint prefix of at least 8 characters. An
@@ -510,7 +516,7 @@ The daemon never needs root.
 
 ## Pairing
 
-1. On the computer: `omnibridge pair`. A QR code appears; it is valid for 120
+1. On the computer: `pliwee pair`. A QR code appears; it is valid for 120
    seconds
    and works once.
 2. On the phone: **Pair device**, then scan the code.
@@ -548,7 +554,7 @@ certified in
 Clipboard sharing is, precisely: **automatic desktop → Android sync**
 (opt-in, per device) and **manual Android → desktop send**. It is not
 "automatic bidirectional clipboard", and saying so would be wrong: Android
-10+ refuses clipboard reads to an app without input focus, and OmniBridge uses
+10+ refuses clipboard reads to an app without input focus, and Pliwee uses
 none of the techniques that defeat that. See
 [docs/architecture/CLIPBOARD.md](docs/architecture/CLIPBOARD.md).
 
@@ -645,7 +651,7 @@ implementations cannot drift apart silently:
 ## Repository layout
 
 ```
-omnibridge/
+pliwee/
 ├── protocol/proto/            Wire format — compiled by BOTH implementations
 ├── desktop/                   Rust workspace
 │   ├── proto/                 Generated protobuf types
@@ -690,7 +696,7 @@ Root Markdown is limited to this file and
 * [docs/security/THREAT_MODEL.md](docs/security/THREAT_MODEL.md) — the threat
   model
 * [docs/adr/](docs/adr/) — architecture decision records
-* [docs/design/BRAND.md](docs/design/BRAND.md) — the OmniBridge visual identity
+* [docs/design/BRAND.md](docs/design/BRAND.md) — the Pliwee visual identity
 * [android/README.md](android/README.md) — the Android app
 
 ## Project history
@@ -706,7 +712,7 @@ pairing must be redone once.** See
 [the migration note](docs/migrations/MIGRATION-ANYFLOW-TO-OMNIBRIDGE.md) for
 what to do about an existing checkout or test device.
 
-The repository has since been renamed too, and now lives at
+The repository was then renamed too, and lived at
 `github.com/yurisismotto/OmniBridge`. Its history was recreated on 2026-09-24
 from a byte-identical tree; the earlier history, and the commits, pull
 requests and CI runs that older documents cite, are in
@@ -717,10 +723,17 @@ name and keep their original wording; they are evidence, not documentation.
 Their AnyFlow naming — and the old repository URLs in the CI run and issue
 links they cite — is preserved deliberately.
 
+On 2026-09-30 the project continued as **Pliwee**, in the new repository
+[`yurisismotto/pliwee`](https://github.com/yurisismotto/pliwee)
+([ADR-0020](docs/adr/ADR-0020-rename-to-pliwee.md)).
+[`yurisismotto/OmniBridge`](https://github.com/yurisismotto/OmniBridge) is kept
+read-only as history — the v1.0.0 release, its assets and its signature stay
+there — and `yurisismotto/omnibridge-history` is left untouched.
+
 ## Contributing
 
 Issues and pull requests are welcome on
-[GitHub](https://github.com/yurisismotto/OmniBridge). Before adding a document,
+[GitHub](https://github.com/yurisismotto/pliwee). Before adding a document,
 read [docs/README.md](docs/README.md) for where it belongs;
 [AGENTS.md](AGENTS.md) holds the repository's working agreements, including the
 rules for test gates and historical evidence.

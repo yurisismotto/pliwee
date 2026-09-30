@@ -1,6 +1,6 @@
 [Unit]
 Description=Pliwee — local device continuity daemon
-Documentation=https://github.com/yurisismotto/omnibridge
+Documentation=https://github.com/yurisismotto/pliwee
 # Wait for a usable network, but do not fail without one: the daemon retries
 # and mDNS comes and goes with the link.
 After=network.target
@@ -12,7 +12,8 @@ Restart=on-failure
 RestartSec=5
 
 # The daemon never needs privileges. It binds a port above 1024, writes only
-# under $XDG_DATA_HOME, and talks to a socket in $XDG_RUNTIME_DIR.
+# under $XDG_DATA_HOME and the received-files directory, and talks to a socket
+# in $XDG_RUNTIME_DIR.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
@@ -64,6 +65,22 @@ RuntimeDirectoryMode=0700
 # (~/.local/state), which the daemon never opens: it would create an empty
 # directory nobody reads and do nothing for the one that matters.
 ReadWritePaths=%h/.local/share
+
+# --- the received-files directory -------------------------------------------
+# files.v1 writes what a paired device sends into <XDG downloads>/Pliwee, and
+# ProtectHome=read-only above makes that read-only too unless it is granted.
+# Until 2026-09-30 it was not: OmniBridge 1.0.0 and this unit logged
+# "files.v1 ready" and then failed every incoming transfer with "could not
+# open a temp file: Read-only file system (os error 30)" — measured end to end
+# with the daemon under this file's sandbox and fake_phone sending a file.
+#
+# The grant is ~/Downloads, the XDG default and what xdg-user-dirs creates at
+# login for the default locale, and not the whole of $HOME. The '-' prefix
+# lets the unit start for an account that has no ~/Downloads. A download
+# directory elsewhere — a localised name, XDG_DOWNLOAD_DIR, --download-dir —
+# needs its own grant; the daemon names the exact drop-in when it cannot
+# prepare the directory, and packaging/common/README.md documents it.
+ReadWritePaths=-%h/Downloads
 
 # --- why ProtectKernelModules= is NOT here ---------------------------------
 # It was here, and it made the unit unstartable on both Ubuntu targets.

@@ -111,6 +111,26 @@ route to a user's service manager. This is inherent to user units, not a
 packaging defect; the new binary is in place and takes effect at the next
 `systemctl --user restart pliweed` or the next login.
 
+## Where received files go
+
+Files a paired device sends land in `<XDG downloads>/Pliwee`. The unit grants
+`~/Downloads` (`ReadWritePaths=-%h/Downloads`) and nothing else in `$HOME`
+beyond `~/.local/share`. If your download directory is elsewhere — a
+localised name such as `~/Téléchargements`, `XDG_DOWNLOAD_DIR`, or
+`pliweed --download-dir` — grant its parent once, and the daemon's start-up
+warning prints the exact line for your directory:
+
+```bash
+systemctl --user edit pliweed.service
+#   [Service]
+#   ReadWritePaths=-/home/you/Téléchargements
+systemctl --user restart pliweed.service
+```
+
+Until 2026-09-30 the unit did not grant `~/Downloads` either, and every
+incoming file failed with *"could not store the file"* — OmniBridge 1.0.0
+included.
+
 ## Upgrading from OmniBridge
 
 Pliwee 1.1.0 is the first release under the new name (ADR-0020). An

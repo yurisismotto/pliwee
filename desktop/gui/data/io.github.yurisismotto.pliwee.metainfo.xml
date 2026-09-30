@@ -72,8 +72,8 @@
     <id>io.github.yurisismotto.omnibridge</id>
   </replaces>
 
-  <url type="homepage">https://github.com/yurisismotto/omnibridge</url>
-  <url type="bugtracker">https://github.com/yurisismotto/omnibridge/issues</url>
+  <url type="homepage">https://github.com/yurisismotto/pliwee</url>
+  <url type="bugtracker">https://github.com/yurisismotto/pliwee/issues</url>
 
   <developer id="io.github.yurisismotto">
     <name>Yuri Converso Sismotto</name>
