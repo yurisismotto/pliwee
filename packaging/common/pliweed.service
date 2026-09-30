@@ -1,6 +1,6 @@
 [Unit]
 Description=Pliwee — local device continuity daemon
-Documentation=https://github.com/yurisismotto/omnibridge
+Documentation=https://github.com/yurisismotto/pliwee
 # Wait for a usable network, but do not fail without one: the daemon retries
 # and mDNS comes and goes with the link.
 After=network.target

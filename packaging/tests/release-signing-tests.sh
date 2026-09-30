@@ -537,13 +537,16 @@ if grep -q -- '--fingerprint' "$ROOT/README.md"; then
 else
     notok "README.md's verification recipe does not pass --fingerprint"
 fi
-if grep -qE 'releases/[^ )]*omnibridge-release-pubkey\.asc' "$ROOT/README.md"; then
+# From the first Pliwee release the asset is pliwee-release-pubkey.asc: the
+# same key, with the Pliwee UID added (ADR-0020 D6). OmniBridge v1.0.0 keeps
+# its own copy under the old name on its own release page.
+if grep -qE 'releases/[^ )]*pliwee-release-pubkey\.asc' "$ROOT/README.md"; then
     ok "README.md tells the reader to obtain the key from the release page"
 else
     notok "README.md does not say where to obtain the public key"
 fi
 # And it must not send them back to a repository copy that no longer exists.
-if grep -q 'raw\.githubusercontent\.com.*omnibridge-release-pubkey' "$ROOT/README.md"; then
+if grep -qE 'raw\.githubusercontent\.com.*(pliwee|omnibridge)-release-pubkey' "$ROOT/README.md"; then
     notok "README.md still points at a repository copy of the public key, which is not tracked"
 else
     ok "README.md does not point at a repository copy of the public key"

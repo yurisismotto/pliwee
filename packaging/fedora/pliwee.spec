@@ -16,7 +16,7 @@ Release:        1%{?dist}
 Summary:        Local-first device continuity between Android and Fedora
 
 License:        Apache-2.0
-URL:            https://github.com/yurisismotto/omnibridge
+URL:            https://github.com/yurisismotto/pliwee
 
 # Both tarballs come from packaging/release/make-source-bundle.sh. Source1 is
 # every crate in desktop/Cargo.lock, vendored, because mock and koji build
