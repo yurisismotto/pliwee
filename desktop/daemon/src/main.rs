@@ -209,7 +209,21 @@ async fn main() -> anyhow::Result<()> {
         ..FilesConfig::default()
     };
     if let Err(e) = destination.prepare() {
-        tracing::warn!(error = %e, "could not prepare the download directory");
+        if e.kind() == std::io::ErrorKind::ReadOnlyFilesystem {
+            // The packaged user unit grants ~/Downloads only; any other
+            // download directory needs its own grant (pliweed.service).
+            tracing::warn!(
+                error = %e,
+                dir = %destination.dir().display(),
+                "could not prepare the download directory: the service's sandbox does not allow \
+                 writing there, so received files cannot be stored. To allow it, run \
+                 `systemctl --user edit pliweed.service`, add `[Service]` and \
+                 `ReadWritePaths=-{}`, then `systemctl --user restart pliweed.service`",
+                destination.dir().parent().unwrap_or(destination.dir()).display()
+            );
+        } else {
+            tracing::warn!(error = %e, "could not prepare the download directory");
+        }
     }
     tracing::info!(
         download_dir = %destination.dir().display(),

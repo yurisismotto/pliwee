@@ -134,6 +134,16 @@ timeout was exceeded"*. A harness defect (§2.3), not a product one.
 
 ## 4. Backlog — carried, not blocking this closure
 
+> **SUPERSEDED 2026-09-30, by `release/pliwee-1.1.0`**, for the first row
+> only. The download-directory defect is fixed before 1.1.0: `pliweed.service`
+> now grants `ReadWritePaths=-%h/Downloads`, and the daemon names the exact
+> drop-in when a download directory elsewhere cannot be prepared. Measured end
+> to end on this host, with `pliweed` under the unit file's own sandbox and
+> `fake_phone` sending a file: with the previous unit, transfer `dfa7b7cb`
+> *"could not open a temp file … Read-only file system (os error 30)"*,
+> `state=failed`; with the fixed unit, transfer `bfb7b4f5` *"received,
+> verified and stored"*, 0600. The row below is left as it was recorded.
+
 | Item | State | Why it does not block |
 | --- | --- | --- |
 | **Files received by the packaged daemon cannot be written.** `pliweed.service` has `ProtectHome=read-only` and makes only `~/.local/share` writable; received files go to `<XDG downloads>/Pliwee`. Under the unit's sandbox a write into `~/Downloads/OmniBridge` is **denied** (probed on this host with `systemd-run -p ProtectSystem=strict -p ProtectHome=read-only -p ReadWritePaths=~/.local/share`), and the upgraded guest logged *"could not prepare the download directory: Read-only file system"*. | **open product defect, pre-existing** | Present unchanged in the published OmniBridge 1.0.0 unit; phone → desktop receive under the unit was never measured (lifecycle-peer-gates L15 records it NOT EXECUTED). It is not introduced by the rebrand and does not affect the upgrade. It is a release decision for 1.1.0, not a migration one. |

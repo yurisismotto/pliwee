@@ -228,6 +228,13 @@ if [ -f "$UNIT" ]; then
     else
         fail "S1: ReadWritePaths= is not the settled %h/.local/share"
     fi
+    # Received files. Without this grant every incoming transfer failed with
+    # "Read-only file system" under the unit (measured end to end, 2026-09-30).
+    if grep -qx 'ReadWritePaths=-%h/Downloads' "$SCRATCH/unit.directives"; then
+        pass "S1: ReadWritePaths=-%h/Downloads (files.v1 can store what it receives)"
+    else
+        fail "S1: the unit does not grant -%h/Downloads; every received file would fail to store"
+    fi
     if grep -q '^StateDirectory=' "$SCRATCH/unit.directives"; then
         fail "StateDirectory= is back; in a user unit it creates ~/.local/state, which the daemon never opens"
     else
