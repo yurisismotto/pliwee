@@ -192,13 +192,9 @@ async fn main() -> anyhow::Result<()> {
     // discovering it separately.
     let clipboard_backend = platform::clipboard_backend();
     if let Err(why) = clipboard_backend.watch_availability() {
-        tracing::info!(
-            reason = %why,
-            "clipboard auto-send is unavailable on this session; sending by \
-             hand reads the selection the same way and is usually unavailable \
-             too. Receiving is unaffected — `pliwee clipboard status` has \
-             the detail"
-        );
+        // What that means for sending by hand differs by platform, so the
+        // platform says it.
+        platform::explain_clipboard_watch(&why);
     }
     let clipboard = ClipboardManager::new(clipboard_backend, device_id.clone());
     tracing::info!(backend = %clipboard.backend().describe(), "clipboard.v1 ready");

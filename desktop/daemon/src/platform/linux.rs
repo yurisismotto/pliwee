@@ -134,6 +134,17 @@ pub fn clipboard_backend() -> Arc<dyn ClipboardBackend> {
     pliwee_capability_clipboard::backend::detect()
 }
 
+/// Says what a missing clipboard watch means on this session.
+pub fn explain_clipboard_watch(why: &str) {
+    tracing::info!(
+        reason = %why,
+        "clipboard auto-send is unavailable on this session; sending by \
+         hand reads the selection the same way and is usually unavailable \
+         too. Receiving is unaffected — `pliwee clipboard status` has \
+         the detail"
+    );
+}
+
 /// The freedesktop notification server, or [`NoSink`].
 pub async fn notification_sink() -> Arc<dyn NotificationSink> {
     match DbusSink::connect().await {

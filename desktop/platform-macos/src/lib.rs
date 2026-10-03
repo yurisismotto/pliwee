@@ -101,6 +101,15 @@ pub fn default_control_transport() -> Result<UnixControlTransport, paths::PathEr
 /// supplied on every load and never persisted, so changing it later costs
 /// nothing.
 pub fn open_store(dir: impl AsRef<Path>) -> pliwee_core::Result<pliwee_core::store::Store> {
+    // Said *before* the keychain is touched, because the touch can block: a
+    // differently signed `pliweed` (an ad-hoc rebuild) makes macOS ask
+    // whether it may use the key, and the agent waits for the answer. Without
+    // this line the log would stop at "starting" with no hint why.
+    tracing::info!(
+        service = keychain::SERVICE,
+        "reading this Mac's identity key from the login keychain; if macOS asks \
+         whether pliweed may use it, the agent is waiting for that answer"
+    );
     pliwee_core::store::Store::open_with(pliwee_core::store::StoreConfig {
         secrets: Arc::new(keychain::KeychainSecretStore::new(dir.as_ref())),
         backend: Arc::new(pliwee_core::identity::SoftwareBacking),

@@ -120,6 +120,17 @@ pub fn clipboard_backend() -> Arc<dyn ClipboardBackend> {
     Arc::new(pliwee_macos::clipboard::PasteboardBackend::new())
 }
 
+/// Says what a missing clipboard watch means here: automatic sending only.
+/// Unlike the GNOME case the Linux row describes, reading the pasteboard by
+/// hand works.
+pub fn explain_clipboard_watch(why: &str) {
+    tracing::info!(
+        reason = %why,
+        "clipboard auto-send is unavailable on macOS; sending by hand and \
+         receiving both work — `pliwee clipboard status` has the detail"
+    );
+}
+
 /// No notification sink on macOS yet — see `pliwee-macos`'s crate docs.
 ///
 /// [`NoSink`] rather than a sink that accepts and discards: this device then
