@@ -22,6 +22,10 @@
 > reboot. It closes the device gates of §10.3 and §10.4, finds two defects
 > (both fixed), and updates the verdict in §11.6.
 
+> **Second reboot — 2026-10-03.** §12 records the reboot gate re-run after
+> `ba667b4`: the service started on its own at login. It supersedes the
+> reboot row of §11.5 with a dated note there; the original row stands.
+
 Status vocabulary in this report: **EXECUTED/PASS**, **EXECUTED/FAIL**,
 **NOT EXECUTED** (with the reason). Nothing is reported as passing that was
 not run.
@@ -620,6 +624,7 @@ any that fails reopens this verdict.
 | Restart app | EXECUTED/PASS |
 | Menu bar manual observation | HUMAN-OBSERVED |
 | Reboot | **EXECUTED/FAIL** (service start at login); persistence and recovery PASS; fix landed, second reboot NOT EXECUTED |
+| ↳ *note, 2026-10-03 (§12)* | *superseded: second reboot after `ba667b4` — the service started on its own at login. EXECUTED/PASS* |
 | Fedora regression | NOT EXECUTED — requires a Fedora/Linux host (§10.5) |
 | ADR-0021 | Proposed (unchanged) |
 
@@ -633,3 +638,61 @@ Fedora regression is NOT EXECUTED, and the reboot gate needs one more real
 reboot with a single copy of the app to show the service starting at login
 after `ba667b4`. ADR-0021's recommendation from §10.7 stands: keep it
 *Proposed* until the Fedora regression has run.
+
+---
+
+## 12. Second reboot — 2026-10-03
+
+The one macOS gate §11 left open: does the service start by itself at login
+after a real reboot, with a single copy of the app on disk? Tested on
+`3a978e0` (code at `ba667b4`); working tree clean; identity
+`Yuri Converso Sismotto <yuri.sismotto@hotmail.com>`.
+
+### 12.1 Preconditions
+
+| Precondition | Observation |
+| --- | --- |
+| Restart Service before the reboot (owner) | agent log: `pliweed starting` at 12:35:06 local, identity read, session with the SM-X620 at 12:35:14 — 41 s before the boot |
+| A real reboot | `kern.boottime` 12:03:33 → **12:35:47** |
+| One copy of the app | `macos/build/Pliwee.app` only (Spotlight lists one bundle with the identifier); one running instance |
+| Agent binary matches the registration | `codesign --verify` on the running agent: valid on disk |
+
+### 12.2 What happened at login
+
+| Time (local) | Event | Source |
+| --- | --- | --- |
+| 12:35:47 | boot | `kern.boottime` |
+| 12:36:47 | Background Task Management enumerates the agent item `pliweed`, parent `…/macos/build/Pliwee.app` | `backgroundtaskmanagementd` |
+| 12:36:50.489 | `Setting service io.github.yurisismotto.pliwee.daemon to enabled (initiated by smd)`; `Submit job succeeded` | `launchd` |
+| 12:36:51 | `Pliwee.app` process starts (pid 711) | `ps` |
+| 12:37:02 | `pliweed` starts (pid 980, ppid 1); identity read from the keychain in 1.2 s with no prompt | `ps`, agent log |
+| 12:37:04 | listening on 55432, control socket ready | agent log |
+| 12:37:10 | `session established … peer=0ABF FA76 C715 32D0` — the tablet reconnected | agent log |
+
+The job was submitted by `smd` at login, from the Background Task Management
+record, a second **before** the app process existed: the app did not start
+the agent. Not established: who opened the app at 12:36:51 — it was already
+running when this check began, contrary to the test plan's "do not open the
+app first". The ordering above is what makes the result independent of that.
+
+### 12.3 Results
+
+| Criterion | Result | Evidence |
+| --- | --- | --- |
+| Service started on its own at login | **EXECUTED/PASS** | §12.2; `launchctl print`: `state = running`, `runs = 1`, `last exit code = (never exited)` |
+| No competing copy | **EXECUTED/PASS** | one bundle on disk, one instance running |
+| Identity persisted | **EXECUTED/PASS** | device `8d0cc84faf9c084c3ed410c3ddcc4b7b`, fingerprint `9D39 5366 85A4 8134`, keychain item present, `state.json` unmodified since 03:29:17 — identical to §11.2 |
+| Trust persisted | **EXECUTED/PASS** | SM-X620 `0ABF FA76 C715 32D0`, paired, `battery.v1, clipboard.v1, files.v1` |
+| Android reconnected without pairing | **EXECUTED/PASS** | session at 12:37:10, same peer; `pliwee ping` → pong in 8 ms |
+| A real operation after the reboot | **EXECUTED/PASS** | `pliwee-second-reboot-8842` put on the Mac's pasteboard and sent (25 bytes); pasted with the system Paste key on the tablet, which read exactly that text |
+
+**Reboot gate: EXECUTED/PASS.** No defect found; no code changed in this
+round.
+
+### 12.4 Verdict
+
+**MACOS DESKTOP V1: CONDITIONALLY ACCEPTED.**
+
+Every macOS gate has now been executed and passed, or human-observed (the
+menu bar). The verdict stays conditional for one reason: the Fedora
+regression is NOT EXECUTED (§10.5). ADR-0021 stays *Proposed* (§10.7).
