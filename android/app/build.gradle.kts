@@ -56,8 +56,8 @@ android {
         // Pliwee's. versionCode is Play's ordering key: it must rise for
         // every upload to any Play track, and a code Play has seen once can
         // never be reused — not even for a bundle that was rejected.
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

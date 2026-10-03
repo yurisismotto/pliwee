@@ -196,8 +196,18 @@ certificates, and records here:
 
 | Key | Certificate SHA-256 | SHA-1 | Valid |
 | --- | --- | --- | --- |
-| app signing (`pliwee-app-signing`) | *pending operator provisioning* | | |
-| upload (`pliwee-upload`) | *pending operator provisioning* | | |
+| app signing (`pliwee-app-signing`) | `81:86:C0:05:D0:10:CF:32:E0:1A:4D:CC:75:BB:6D:1E:42:E2:21:77:40:32:95:9C:B7:00:BF:E8:B4:68:64:44` | `9C:A0:E7:A4:23:70:A5:85:0B:ED:8D:05:17:27:DB:82:46:EB:2B:1B` | 2026-09-25 21:39:43 → 2056-09-24 21:39:43 UTC |
+| upload (`pliwee-upload`) | `67:DE:80:2F:32:04:2A:F7:F1:F6:DB:67:48:E9:85:17:70:05:26:D4:C8:06:98:35:6E:F5:D4:85:D0:B1:73:73` | `F0:81:F5:88:4F:80:EF:89:FA:9A:FD:DC:91:9B:52:76:90:55:D4:05` | 2026-09-25 21:39:44 → 2056-09-24 21:39:44 UTC |
+
+> **2026-10-03 — provisioned.** The operator ran `provision-signing-keys.sh`
+> at 2026-09-25T21:39:44Z; both offline backups were restore-verified at
+> 2026-09-25T21:43:33Z (`~/.local/state/pliwee-android-signing/PROVISIONED`).
+> The two public certificates are committed in `android/signing/certs/`,
+> byte-identical to the provisioned ones (file SHA-256
+> `05e404db906246e47d650e37459c6bcb6dcb85e60ba1c826f564bfcc3a466b84` app signing,
+> `3a897e583a86400563aa3d1d5bcb5cf4bc6424e3340503a23614d95d2e0769c8` upload).
+> The table above was filled in from them; the "not yet provisioned" heading
+> it sits under describes 2026-09-24.
 
 Rollback: until the PEPK step of the Play release wave (ADR-0020, W10) the
 Pliwee identity is enrolled nowhere, so discarding it costs only the media;

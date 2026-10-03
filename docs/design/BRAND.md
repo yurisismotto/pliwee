@@ -56,6 +56,15 @@ hand-built `Settings`. Neither renames a device that already exists.
 > `BrandingResourcesTest` asserts them against those masters. What follows
 > still describes the **Linux desktop** artwork, until W7.
 >
+> **2026-10-03 (Android in-app mark fix, after Pliwee 1.1.0).** The in-app
+> mark `logo_pliwee_mark` is drawn by Compose, whose vector parser closed the
+> face and silhouette clips after the first radial paint, so 1.1.0 showed a
+> streak and haze around it in the app bar and on Settings. It is now emitted
+> by `docs/reports/android/android-inapp-mark-compose-v1/derive_logo_mark.py`
+> — the same Wave 6 conversion, one clipped group per paint layer — and
+> `BrandMarkRenderParityTest` compares Compose's pixels with the platform's.
+> The launcher layers are unchanged.
+>
 > **2026-09-25 (Pliwee Wave 7).** The Linux desktop is re-pointed too, so no
 > build draws the OmniBridge artwork any more. The GTK `brand_mark` (app bar,
 > empty states, Settings) compiles in `pliwee-mark.svg` itself, byte for byte.
@@ -561,8 +570,9 @@ Wave 10.
 | [`omnibridge-wordmark.svg`](assets/omnibridge-wordmark.svg) | Wordmark |
 | [`omnibridge-logo-lockup.svg`](assets/omnibridge-logo-lockup.svg) | Mark + wordmark + tagline |
 
-Android adaptive icon: `res/mipmap-anydpi-v26/ic_launcher.xml` with a Dark
-(`#0B1020`) background, the mark as the adaptive foreground inside the 72 dp
+Android adaptive icon: `res/mipmap-anydpi-v26/ic_launcher.xml` with a Surface
+(`#F7F9FC`) background (Dark `#0B1020` until 2026-10-03, changed at the owner's
+request; Surface is also the window background, so the splash matches), the mark as the adaptive foreground inside the 72 dp
 safe zone (and the 66 dp round zone), and a monochrome layer for Android 13+
 themed icons. Since Pliwee W6 they are generated from `pliwee-mark.svg` and
 `pliwee-mark-mono.svg` and asserted against them by geometry and paint.
