@@ -28,10 +28,11 @@ icon=$(mktemp --suffix=.svg); trap 'rm -f "$icon"' EXIT
   printf '</g></svg>'; } > "$icon"
 magick -background none RSVG:"$icon" -resize 512x512 PNG32:"$here/play-icon-512.png"
 
-# 1024 x 500, 24-bit PNG without alpha. The lockup (mark, wordmark, tagline)
-# is drawn for light surfaces, so it sits on light background #F7F9FC.
+# 1024 x 500, 24-bit PNG without alpha. The frozen Pliwee lockup (mark,
+# wordmark, tagline; omnibridge-logo-lockup.svg until 2026-10-03) is drawn
+# for light surfaces, so it sits on light background #F7F9FC.
 magick -size 1024x500 xc:'#F7F9FC' \
-    \( -background none -density 192 RSVG:"$assets/omnibridge-logo-lockup.svg" -resize 760x \) \
+    \( -background none -density 192 RSVG:"$assets/pliwee-lockup.svg" -resize 760x \) \
     -gravity center -composite -alpha off PNG24:"$here/play-feature-graphic-1024x500.png"
 
 magick identify "$here"/play-*.png
