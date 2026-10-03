@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The Pliwee agent as a per-user launchd agent.
+
+  Registered by Pliwee.app through SMAppService.agent(plistName:), from
+  Contents/Library/LaunchAgents/ inside the bundle. Never copied to
+  ~/Library/LaunchAgents and never installed as a LaunchDaemon: it runs as
+  the user, in the user's session, with no privilege, exactly like the
+  systemd user unit packaging/common/pliweed.service on Linux.
+
+  The policy mirrors that unit:
+    Restart=on-failure, RestartSec=5  ->  KeepAlive/SuccessfulExit=false,
+                                          ThrottleInterval=5
+    WantedBy=default.target           ->  RunAtLoad (at registration and
+                                          at every login)
+
+  The Label must match pliwee_macos::LAUNCHD_LABEL (the agent recognises its
+  own job by it, to choose its log file) and AgentService.label in the app;
+  macos/scripts/build-app.sh refuses to assemble a bundle where they differ.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.github.yurisismotto.pliwee.daemon</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/pliweed</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>pliweed</string>
+	</array>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>io.github.yurisismotto.pliwee</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>ProcessType</key>
+	<string>Standard</string>
+</dict>
+</plist>

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Pliwee</string>
+	<key>CFBundleExecutable</key>
+	<string>Pliwee</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.yurisismotto.pliwee</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Pliwee</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<!-- A menu-bar app: no Dock icon until its window is open. -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Apache-2.0</string>
+	<!-- Local network privacy (macOS 15+). The agent, `pliweed`, runs from
+	     this bundle and is attributed to it: it accepts connections from
+	     your own devices on this network and advertises itself over Bonjour
+	     so they can find it. Both service types are the agent's — the
+	     current one and the OmniBridge-era one older phones still browse. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Pliwee connects directly to your own paired devices on this network, so you can send files and share your clipboard without the cloud.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_pliwee._tcp</string>
+		<string>_omnibridge._tcp</string>
+	</array>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+</dict>
+</plist>
