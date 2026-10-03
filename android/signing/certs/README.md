@@ -5,7 +5,7 @@ ever committed here (ADR-0019).
 
 | Path | Identity | Status |
 | --- | --- | --- |
-| `upload-certificate.pem`, `app-signing-certificate.pem` | **Pliwee** — `CN=Pliwee, OU=Android Upload` / `CN=Pliwee, OU=Android App Signing`, aliases `pliwee-upload` / `pliwee-app-signing` | **not yet provisioned.** The operator commits them here after `../provision-signing-keys.sh` completes and both media are restore-verified; their SHA-256 fingerprints go in the ADR-0020 addendum of [ADR-0019](../../../docs/adr/ADR-0019-android-app-signing.md). Until then `../verify-release-bundle.sh` stops: the certificate it expects is missing. |
+| `upload-certificate.pem`, `app-signing-certificate.pem` | **Pliwee** — `CN=Pliwee, OU=Android Upload` / `CN=Pliwee, OU=Android App Signing`, aliases `pliwee-upload` / `pliwee-app-signing` | **provisioned 2026-09-25**, both media restore-verified; committed 2026-10-03. Fingerprints in the ADR-0020 addendum of [ADR-0019](../../../docs/adr/ADR-0019-android-app-signing.md). `../verify-release-bundle.sh` verifies against `upload-certificate.pem`. |
 | `legacy-omnibridge/*.pem` | **OmniBridge** (ADR-0019), retired unused by ADR-0020 §D3 | kept **byte-identical** (moved here with `git mv` in Pliwee Wave 6). They never sign a Pliwee artifact; `verify-release-bundle.sh` refuses to verify against them. |
 
 Retired OmniBridge fingerprints (SHA-256), for comparison:
