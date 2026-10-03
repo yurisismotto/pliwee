@@ -96,7 +96,10 @@ note "launchd label agrees in all three places: $LABEL"
 RUST_OUTS=()
 for arch in "${ARCHS[@]}"; do
     target="$(rust_target "$arch")"
-    rustup target list --installed | grep -qx "$target" \
+    # Captured, then searched: never `| grep -q`, whose early exit kills the
+    # producer with SIGPIPE and, under pipefail, turns a match into a miss.
+    installed="$(rustup target list --installed)"
+    grep -qx "$target" <<<"$installed" \
         || die "Rust target $target is not installed: rustup target add $target"
     note "cargo build ($PROFILE, $target): pliwee-daemon, pliwee-cli"
     cargo_profile=()
@@ -107,11 +110,19 @@ for arch in "${ARCHS[@]}"; do
 done
 
 # --- Swift: the application ----------------------------------------------------
+# Each architecture's binary is copied out as soon as it is built: SwiftPM's
+# build system writes every architecture to the same product path, so the
+# second build would otherwise replace the first before `lipo` sees it
+# (measured: "lipo: same architectures (x86_64) found").
+SWIFT_STAGE="$(mktemp -d)"
 SWIFT_OUTS=()
 for arch in "${ARCHS[@]}"; do
     note "swift build ($PROFILE, $arch): Pliwee"
     ( cd "$MACOS" && swift build -c "$PROFILE" --arch "$arch" --product Pliwee )
-    SWIFT_OUTS+=("$(cd "$MACOS" && swift build -c "$PROFILE" --arch "$arch" --show-bin-path)")
+    bin="$(cd "$MACOS" && swift build -c "$PROFILE" --arch "$arch" --show-bin-path)"
+    mkdir -p "$SWIFT_STAGE/$arch"
+    cp "$bin/Pliwee" "$SWIFT_STAGE/$arch/Pliwee"
+    SWIFT_OUTS+=("$SWIFT_STAGE/$arch")
 done
 
 # --- the bundle ----------------------------------------------------------------
@@ -198,6 +209,7 @@ codesign "${sign_flags[@]}" --identifier io.github.yurisismotto.pliwee.cli "$APP
 codesign "${sign_flags[@]}" --identifier io.github.yurisismotto.pliwee "$APP"
 codesign --verify --strict --deep "$APP" || die "codesign verification failed"
 
+rm -rf "$SWIFT_STAGE"
 note "built $APP"
 note "  version $VERSION, ${ARCHS[*]}, $PROFILE"
 for exe in "${executables[@]}"; do
