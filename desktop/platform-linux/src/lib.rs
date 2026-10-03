@@ -149,6 +149,16 @@ pub fn default_control_transport() -> UnixControlTransport {
 /// What to tell a person whose client cannot reach the agent.
 pub const START_HINT: &str = "Start it with: systemctl --user start pliweed.service";
 
+/// Whether sending the clipboard by hand fails whenever change watching does.
+///
+/// True on Linux, and the reason is finding F-2: both read a selection this
+/// process does not own, so on a compositor with no data-control protocol and
+/// no reachable Xwayland, if the watcher cannot read it, neither can a send.
+/// `pliwee clipboard status` derives the manual-send line from the watch flag
+/// for that reason, without probing (a probe would block for the backend
+/// timeout on exactly the session it is diagnosing).
+pub const MANUAL_SEND_NEEDS_WATCH: bool = true;
+
 #[cfg(test)]
 mod tests {
     use super::*;

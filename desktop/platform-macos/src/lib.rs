@@ -71,6 +71,16 @@ pub const START_HINT: &str =
     "Open Pliwee and turn on \"Run Pliwee in the background\" in Settings, \
      or run pliweed in a terminal";
 
+/// Whether sending the clipboard by hand fails whenever change watching does.
+///
+/// False on macOS. The watch is absent by policy — `NSPasteboard` has no
+/// change notification and the clipboard contract forbids polling — not
+/// because the pasteboard cannot be read: a manual send reads it with
+/// `stringForType:`, which works. Deriving one from the other, as the Linux
+/// row must (finding F-2), made `pliwee clipboard status` on a Mac report
+/// manual sending as unsupported while the agent was sending clips.
+pub const MANUAL_SEND_NEEDS_WATCH: bool = false;
+
 /// Where the control socket lives for this user.
 ///
 /// Panics never; an unusable path is reported by [`bind`] and by the client's

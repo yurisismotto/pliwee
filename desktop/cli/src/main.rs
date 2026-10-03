@@ -573,12 +573,7 @@ fn print_clipboard_status(report: &ClipboardStatusReport) {
     // length of its own diagnosis.
     println!(
         "  manual send          {}",
-        if report.watch_available {
-            "supported on this session"
-        } else {
-            "NOT supported here — sending reads the selection the same way \
-             auto-send watches it"
-        }
+        manual_send_line(report, platform::MANUAL_SEND_NEEDS_WATCH)
     );
     println!("  receiving            supported — writing a clip needs no data-control protocol");
     // Printed so the bounded-growth property is observable rather than merely
@@ -1050,6 +1045,26 @@ fn print_notifications_status(report: &NotificationsStatusReport) {
     }
 }
 
+/// The `manual send` line of `pliwee clipboard status`.
+///
+/// `needs_watch` is the adapter's statement of whether a manual send fails
+/// whenever change watching does — true on Linux (finding F-2), false on
+/// macOS, where the watch is absent by policy and reading works.
+fn manual_send_line(report: &ClipboardStatusReport, needs_watch: bool) -> &'static str {
+    if needs_watch {
+        if report.watch_available {
+            "supported on this session"
+        } else {
+            "NOT supported here — sending reads the selection the same way \
+             auto-send watches it"
+        }
+    } else if report.backend_available {
+        "supported — reading the clipboard does not depend on a change watch here"
+    } else {
+        "NOT supported here — this session has no working clipboard backend"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Args;
@@ -1075,5 +1090,53 @@ mod tests {
                 "the CLI still names the retired binary: {text}"
             );
         }
+    }
+
+    fn clipboard_report(
+        backend_available: bool,
+        watch_available: bool,
+    ) -> pliwee_control::ClipboardStatusReport {
+        pliwee_control::ClipboardStatusReport {
+            enabled: true,
+            backend: "test".into(),
+            backend_detail: String::new(),
+            backend_available,
+            watch_available,
+            sensitive_available: true,
+            sensitive_detail: String::new(),
+            event_cache_entries: 0,
+            suppression_cache_entries: 0,
+            peers: vec![],
+            pending: vec![],
+        }
+    }
+
+    #[test]
+    fn where_manual_send_needs_the_watch_the_line_follows_it_unchanged() {
+        // The Linux rule (finding F-2), exactly as it was printed before.
+        use super::manual_send_line;
+        assert_eq!(
+            manual_send_line(&clipboard_report(true, true), true),
+            "supported on this session"
+        );
+        assert!(manual_send_line(&clipboard_report(true, false), true).starts_with("NOT supported"));
+    }
+
+    #[test]
+    fn where_it_does_not_a_missing_watch_does_not_disable_manual_send() {
+        // The macOS case: no watch by policy, reading works.
+        use super::manual_send_line;
+        assert!(manual_send_line(&clipboard_report(true, false), false).starts_with("supported"));
+        assert!(
+            manual_send_line(&clipboard_report(false, false), false).starts_with("NOT supported")
+        );
+    }
+
+    #[test]
+    fn this_platform_declares_the_rule_it_is_known_to_have() {
+        assert_eq!(
+            super::platform::MANUAL_SEND_NEEDS_WATCH,
+            !cfg!(target_os = "macos")
+        );
     }
 }
