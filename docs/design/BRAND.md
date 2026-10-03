@@ -56,6 +56,15 @@ hand-built `Settings`. Neither renames a device that already exists.
 > `BrandingResourcesTest` asserts them against those masters. What follows
 > still describes the **Linux desktop** artwork, until W7.
 >
+> **2026-10-03 (Android in-app mark fix, after Pliwee 1.1.0).** The in-app
+> mark `logo_pliwee_mark` is drawn by Compose, whose vector parser closed the
+> face and silhouette clips after the first radial paint, so 1.1.0 showed a
+> streak and haze around it in the app bar and on Settings. It is now emitted
+> by `docs/reports/android/android-inapp-mark-compose-v1/derive_logo_mark.py`
+> — the same Wave 6 conversion, one clipped group per paint layer — and
+> `BrandMarkRenderParityTest` compares Compose's pixels with the platform's.
+> The launcher layers are unchanged.
+>
 > **2026-09-25 (Pliwee Wave 7).** The Linux desktop is re-pointed too, so no
 > build draws the OmniBridge artwork any more. The GTK `brand_mark` (app bar,
 > empty states, Settings) compiles in `pliwee-mark.svg` itself, byte for byte.
