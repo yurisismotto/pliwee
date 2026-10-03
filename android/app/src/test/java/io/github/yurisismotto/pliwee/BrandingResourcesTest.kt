@@ -539,10 +539,13 @@ class BrandingResourcesTest {
             emptySet<String>(),
             approved - used,
         )
-        // Dark, and from the one place the platform can read before Compose runs.
+        // Surface, and from the one place the platform can read before Compose
+        // runs. Dark until 2026-10-03, when the owner found the black tile
+        // heavy; Surface is also the window background, so the splash and the
+        // icon are one colour.
         assertTrue(
-            "the launcher background is the brand Dark",
-            res("values/colors.xml").contains("""<color name="ic_launcher_background">#0B1020</color>"""),
+            "the launcher background is the brand Surface",
+            res("values/colors.xml").contains("""<color name="ic_launcher_background">#F7F9FC</color>"""),
         )
     }
 
@@ -617,6 +620,100 @@ class BrandingResourcesTest {
             "the launcher entry must read Pliwee",
             res("values/strings.xml").contains("""<string name="app_name">Pliwee</string>"""),
         )
+    }
+
+    // =======================================================================
+    // B9 — what Compose draws is what the platform draws
+    // =======================================================================
+
+    /**
+     * Every drawable the app paints through Compose clips each path exactly
+     * as the platform VectorDrawable renderer clips it.
+     *
+     * The two renderers read `<clip-path>` differently. The platform keeps the
+     * clips per `<group>` and intersects nested ones. Compose's XML parser
+     * (androidx.compose.ui 1.7.6, `parseCurrentVectorNode`) keeps one counter
+     * for the whole document and, at the first `</group>` of any kind, closes
+     * every clip opened so far. Pliwee 1.1.0's `logo_pliwee_mark.xml` nested
+     * a face clip inside the silhouette clip and then a radial's transform
+     * group inside that: Compose dropped both clips after the first radial and
+     * painted the rest unclipped across the app bar and Settings, while the
+     * launcher icon — the platform renderer, from the same conversion — was
+     * right. A launcher check could not see it, and nothing else looked.
+     *
+     * So both readings are modelled here and compared path by path, for every
+     * drawable the Kotlin sources name. `BrandMarkRenderParityTest` measures
+     * the same thing in pixels, on a device.
+     */
+    @Test
+    fun `every drawable Compose paints is clipped as the platform clips it`() {
+        val sources = File("src/main/java").walkTopDown().filter { it.extension == "kt" }.toList()
+        assertTrue("found no Kotlin sources, so nothing names a drawable", sources.size > 10)
+        val names = sources
+            .flatMap { f -> Regex("""(?<![\w.])R\.drawable\.(\w+)""").findAll(f.readText()).map { it.groupValues[1] }.toList() }
+            .toSortedSet()
+        assertTrue("the brand mark must be among the drawables the code paints", "logo_pliwee_mark" in names)
+
+        var clippedPaths = 0
+        for (name in names) {
+            val xml = res("drawable/$name.xml")
+            val platform = clipsPerPath(xml, compose = false)
+            val compose = clipsPerPath(xml, compose = true)
+            assertEquals("$name: the two readings saw a different number of paths", platform.size, compose.size)
+            for (i in platform.indices) {
+                assertEquals(
+                    "$name: path #$i is clipped differently by Compose than by the platform renderer",
+                    platform[i],
+                    compose[i],
+                )
+            }
+            clippedPaths += platform.count { it.isNotEmpty() }
+        }
+        // The mark alone has 12 clipped layers. Fewer means the model saw
+        // nothing to compare, and a pass over nothing is not a pass.
+        assertTrue("only $clippedPaths clipped paths were compared", clippedPaths >= 12)
+    }
+
+    /**
+     * For each `<path>` in document order, the set of `<clip-path>` data that
+     * clips it — under the platform's per-group rule, or under Compose's
+     * single document-wide counter.
+     */
+    private fun clipsPerPath(xml: String, compose: Boolean): List<Set<String>> {
+        val stack = ArrayDeque<MutableList<String>>().apply { addLast(mutableListOf()) }
+        var openClips = 0
+        val out = mutableListOf<Set<String>>()
+        fun endGroup() {
+            if (compose) {
+                // Never below the root: an over-pop is a mismatch, reported below.
+                repeat(openClips + 1) { if (stack.size > 1) stack.removeLast() }
+                openClips = 0
+            } else {
+                stack.removeLast()
+            }
+        }
+        // Attribute values in a VectorDrawable never contain '>', so a tag is
+        // everything between '<' and the next '>'.
+        for (tag in Regex("<(/?)([\\w-]+)([^>]*?)(/?)>").findAll(withoutComments(xml))) {
+            val (close, name, attrs, selfClosing) = tag.destructured
+            val data = Regex("android:pathData=\"([^\"]*)\"").find(attrs)?.groupValues?.get(1)
+            when {
+                close.isNotEmpty() -> if (name == "group") endGroup()
+                name == "group" -> {
+                    stack.addLast(if (compose) mutableListOf() else stack.last().toMutableList())
+                    if (selfClosing.isNotEmpty()) endGroup()
+                }
+                name == "clip-path" -> if (compose) {
+                    // Compose pushes a clipping group of its own.
+                    stack.addLast(mutableListOf(data!!)); openClips++
+                } else {
+                    stack.last().add(data!!)
+                }
+                name == "path" -> out += if (compose) stack.flatten().toSet() else stack.last().toSet()
+            }
+        }
+        if (!compose) assertEquals("unbalanced <group>s", 1, stack.size)
+        return out
     }
 
     private companion object {

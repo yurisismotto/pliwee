@@ -6,7 +6,7 @@
   ui/theme/Color.kt, which is the single Kotlin-side token table.
 -->
 <resources>
-    <color name="ic_launcher_background">#0B1020</color>
+    <color name="ic_launcher_background">#F7F9FC</color>
     <color name="pliwee_background">#F7F9FC</color>
     <color name="pliwee_background_dark">#080C18</color>
     <!-- Notification accent. The corrected blue, not brand blue: a notification

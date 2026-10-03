@@ -110,8 +110,8 @@ Current requirements (help centre answer/9866151, read 2026-09-24):
 
 | Asset | Requirement | Status |
 | --- | --- | --- |
-| App icon | 512 × 512, 32-bit PNG with alpha, ≤ 1024 KB | ✅ [`assets/play/play-icon-512.png`](assets/play/play-icon-512.png): the canonical application icon on Dark `#0B1020`, the same pairing as the launcher's adaptive icon |
-| Feature graphic | 1024 × 500, JPEG or 24-bit PNG, no alpha; **required to publish** | ✅ [`assets/play/play-feature-graphic-1024x500.png`](assets/play/play-feature-graphic-1024x500.png): the canonical lockup (mark, wordmark, tagline) on light surface `#F7F9FC` |
+| App icon | 512 × 512, 32-bit PNG with alpha, ≤ 1024 KB | ✅ [`assets/play/play-icon-512.png`](assets/play/play-icon-512.png): the Pliwee mark on Surface `#F7F9FC`, placed exactly as the launcher's adaptive icon shows it (the OmniBridge icon on Dark `#0B1020` until 2026-10-03; `render.sh` reads the placement and background from the Android resources) |
+| Feature graphic | 1024 × 500, JPEG or 24-bit PNG, no alpha; **required to publish** | ✅ [`assets/play/play-feature-graphic-1024x500.png`](assets/play/play-feature-graphic-1024x500.png): the frozen Pliwee lockup [`pliwee-lockup.svg`](assets/pliwee-lockup.svg) (mark, wordmark, tagline) on light surface `#F7F9FC` (the OmniBridge lockup until 2026-10-03) |
 | Phone screenshots | at least 2 overall; 2–8 per device type; each side 320–3840 px; long side ≤ 2 × short; 4+ at ≥ 1080 px recommended | **pending** — from the real app |
 | 7-inch / 10-inch tablet screenshots | 4+ recommended, each side 1080–7680 px | ✅ six, 1800 × 2724, from the release build on SM-X620 — [`assets/play/screenshots/tablet/`](assets/play/screenshots/tablet/) (status bar and taskbar cropped; see the smoke report §4) |
 | Promo video | optional; YouTube, public or unlisted | not planned; the FGS video is separate and not a promo |
