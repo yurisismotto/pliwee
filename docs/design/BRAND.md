@@ -570,8 +570,9 @@ Wave 10.
 | [`omnibridge-wordmark.svg`](assets/omnibridge-wordmark.svg) | Wordmark |
 | [`omnibridge-logo-lockup.svg`](assets/omnibridge-logo-lockup.svg) | Mark + wordmark + tagline |
 
-Android adaptive icon: `res/mipmap-anydpi-v26/ic_launcher.xml` with a Dark
-(`#0B1020`) background, the mark as the adaptive foreground inside the 72 dp
+Android adaptive icon: `res/mipmap-anydpi-v26/ic_launcher.xml` with a Surface
+(`#F7F9FC`) background (Dark `#0B1020` until 2026-10-03, changed at the owner's
+request; Surface is also the window background, so the splash matches), the mark as the adaptive foreground inside the 72 dp
 safe zone (and the 66 dp round zone), and a monochrome layer for Android 13+
 themed icons. Since Pliwee W6 they are generated from `pliwee-mark.svg` and
 `pliwee-mark-mono.svg` and asserted against them by geometry and paint.

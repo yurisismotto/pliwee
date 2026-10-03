@@ -539,10 +539,13 @@ class BrandingResourcesTest {
             emptySet<String>(),
             approved - used,
         )
-        // Dark, and from the one place the platform can read before Compose runs.
+        // Surface, and from the one place the platform can read before Compose
+        // runs. Dark until 2026-10-03, when the owner found the black tile
+        // heavy; Surface is also the window background, so the splash and the
+        // icon are one colour.
         assertTrue(
-            "the launcher background is the brand Dark",
-            res("values/colors.xml").contains("""<color name="ic_launcher_background">#0B1020</color>"""),
+            "the launcher background is the brand Surface",
+            res("values/colors.xml").contains("""<color name="ic_launcher_background">#F7F9FC</color>"""),
         )
     }
 
