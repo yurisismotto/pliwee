@@ -319,6 +319,19 @@ surfaced in planning rather than discovered at release time.
 
 ## 11. PoCs
 
+> **Results — 2026-10-03, branch `feature/macos-desktop-v1`.** The first macOS
+> integration measured several of these on an Apple Silicon Mac; the evidence
+> is [`reports/macos/MACOS-DESKTOP-V1.md`](../../reports/macos/MACOS-DESKTOP-V1.md)
+> and the decisions [ADR-0021](../../adr/ADR-0021-macos-desktop-integration.md).
+> POC-MAC-01: the workspace builds and its portable and agent tests pass on
+> `aarch64-apple-darwin`. POC-MAC-02: `mdns-sd` interoperates with
+> `mDNSResponder` from a terminal; from the launchd agent the advertisement was
+> not observed, pending local-network consent. POC-MAC-06: `SMAppService`
+> agent registration and removal work, including ad hoc signed, with the
+> caveat that a rebuilt ad-hoc agent must be registered again. POC-MAC-07: the
+> SwiftUI app drives the agent over the Unix socket end to end. POC-MAC-03/04
+> (Secure Enclave) and POC-MAC-05's prompting question were not run.
+
 | ID | Question |
 | --- | --- |
 | **POC-MAC-01** | Does the workspace compile and pass its portable tests on `aarch64-apple-darwin`? |

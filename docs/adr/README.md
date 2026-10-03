@@ -25,3 +25,4 @@ alternatives that were actually considered, and what the decision costs.
 | [0018](ADR-0018-rename-to-omnibridge.md) | Rename to OmniBridge | Accepted · supersedes 0011's identifier tables · identifier tables and no-dual-stack rule superseded by 0020 once implemented |
 | [0019](ADR-0019-android-app-signing.md) | Android app signing: maintainer-owned key, Play App Signing, separate upload key | Accepted · signing identity amended by 0020 (custody model unchanged) |
 | [0020](ADR-0020-rename-to-pliwee.md) | Rename to Pliwee: identity layers, legacy wire profile, state migration | Accepted · not yet implemented |
+| [0021](ADR-0021-macos-desktop-integration.md) | macOS desktop integration: SwiftUI client, `pliwee-macos` adapter, launchd agent via SMAppService | Proposed · implemented on `feature/macos-desktop-v1` |

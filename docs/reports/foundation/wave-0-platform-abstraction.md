@@ -529,6 +529,17 @@ shows up in review as a **missing block** rather than as an invisible
 weakening. The reasoning is recorded in `desktop/Cargo.toml` where the table
 used to be.
 
+> **Superseded in part — 2026-10-03, branch `feature/macos-desktop-v1`.** The
+> architectural event below happened: the macOS adapter (`pliwee-macos`) needs
+> FFI for IOKit's power-source API and for one AppKit constant. The test was
+> renamed `no_crate_uses_unsafe_outside_the_declared_ffi_modules`; it allows
+> `unsafe` in exactly two declared files, each block justified by a
+> `// SAFETY:` comment that a new test requires, and fails anywhere else. The
+> portable crates still `forbid` it. See
+> [ADR-0021](../../adr/ADR-0021-macos-desktop-integration.md) D2 and
+> [`reports/macos/MACOS-DESKTOP-V1.md`](../macos/MACOS-DESKTOP-V1.md) §6. The
+> original text stands below.
+
 `no_crate_actually_uses_unsafe_today` asserts that Wave 0 added none. If it
 starts failing, that is an architectural event worth a conversation, not a
 silenced assertion.

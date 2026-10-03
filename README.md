@@ -181,6 +181,7 @@ For developers, each feature is a versioned protocol capability: `files.v1`,
 | **Ubuntu 26.04 LTS** | **Runtime certified** | same |
 | **Debian 13 trixie** | **Runtime certified**, with one documented exception | same, except that manual clipboard **sending** cannot work on its compositor — see [Known limitations](#known-limitations) |
 | **Android** | Companion app | Built from source for now; not yet on Google Play |
+| **macOS 14+** (Apple Silicon) | **Preview** — build from source | `Pliwee.app`: a native menu-bar app for the same agent. Builds, pairs and receives files end to end on a Mac; not certified, not signed with a Developer ID, not notarized. No clipboard auto-send and no notification mirroring yet — see [macos/README.md](macos/README.md) |
 
 The release RPMs are built on Fedora 44; on an older Fedora, build from source.
 **Ubuntu 22.04 LTS and Debian 12 bookworm cannot run the desktop application**
@@ -660,17 +661,21 @@ pliwee/
 │   ├── capabilities/files/    files.v1 — transfers, filename safety, stream auth
 │   ├── capabilities/clipboard/ clipboard.v1 — text rules, policy, loop suppression
 │   ├── capabilities/notifications/ notifications.v1 — mirror, roles, redaction
+│   ├── platform-unix/         the Unix-socket control transport, shared by both adapters
+│   ├── platform-linux/        the Linux adapter — XDG, systemd, D-Bus, tray
+│   ├── platform-macos/        the macOS adapter — Keychain, IOKit, NSPasteboard
 │   ├── daemon/                pliweed
 │   ├── cli/                   pliwee
 │   └── gui/                   pliwee-gui — GTK4 / libadwaita
+├── macos/                     Pliwee.app — SwiftUI menu-bar app (a Swift package) and its build
 ├── android/                   Kotlin + Compose app
 ├── browser-extension/         (placeholder)
 ├── packaging/common/          the systemd user unit and the cargo vendor config
 ├── packaging/fedora/          RPM spec, firewalld service
 ├── packaging/debian/          debhelper packaging for Debian and Ubuntu
 └── docs/                      see docs/README.md for the full taxonomy
-    ├── adr/                   ADR-0001 … ADR-0020
-    ├── architecture/          OVERVIEW.md, PROTOCOL.md, FILES.md, CLIPBOARD.md, NOTIFICATIONS.md
+    ├── adr/                   ADR-0001 … ADR-0021
+    ├── architecture/          OVERVIEW.md, PROTOCOL.md, FILES.md, CLIPBOARD.md, NOTIFICATIONS.md, MACOS.md
     ├── design/                BRAND.md, UI-GUIDELINES.md, tokens.json, assets/
     ├── security/              THREAT_MODEL.md
     ├── research/              cross-platform expansion, notifications.v1
@@ -698,6 +703,9 @@ Root Markdown is limited to this file and
 * [docs/adr/](docs/adr/) — architecture decision records
 * [docs/design/BRAND.md](docs/design/BRAND.md) — the Pliwee visual identity
 * [android/README.md](android/README.md) — the Android app
+* [macos/README.md](macos/README.md) — the macOS app (preview): build, run,
+  troubleshoot; how it works is
+  [docs/architecture/MACOS.md](docs/architecture/MACOS.md)
 
 ## Project history
 

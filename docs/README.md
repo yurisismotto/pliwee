@@ -41,8 +41,8 @@ belongs beside its siblings.
 
 ```
 docs/
-├── adr/                        20 decisions, ADR-0001 … ADR-0020 — see adr/README.md
-├── architecture/               how the system works now: OVERVIEW, PROTOCOL, CLIPBOARD, FILES, NOTIFICATIONS
+├── adr/                        21 decisions, ADR-0001 … ADR-0021 — see adr/README.md
+├── architecture/               how the system works now: OVERVIEW, PROTOCOL, CLIPBOARD, FILES, NOTIFICATIONS, MACOS
 ├── design/                     BRAND, UI-GUIDELINES, PLAY-STORE-LISTING, tokens.json, assets/ (the build reads the app icon here),
 │                               references/ (owner-supplied boards; never read by a build)
 ├── security/                   THREAT_MODEL
@@ -69,6 +69,7 @@ docs/
 │   ├── files/                  files.v1 capability sprint report
 │   ├── foundation/             Wave 0 platform abstraction and its follow-up debts
 │   ├── linux/                  KDE StatusNotifier, U2 post-certification hardening — see its README
+│   ├── macos/                  the first macOS desktop integration (Pliwee.app, pliwee-macos)
 │   ├── notifications/          notifications.v1 N0 → N5 waves — see its README
 │   ├── security/               trust-store and device-revocation work
 │   └── ux/                     UX hardening and debt cleanup
