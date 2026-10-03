@@ -181,6 +181,13 @@ with `--sign` and notarizing are documented, and not simulated.
   remains is the user's one-time local-network consent, which could not be
   observed or answered in this session. Pairing by QR code does not depend
   on discovery: the code carries the Mac's addresses.
+  *Note, 2026-10-03 (closure round, status unchanged):* with the consent
+  given, the advertisement of the agent run by the background service was
+  observed and resolved by the system's Bonjour client on the LAN interfaces,
+  endpoint matching the launchd agent; no code change was needed
+  ([report §10.2](../reports/macos/MACOS-DESKTOP-V1.md)). Observation from a
+  second host (a phone) remains to be done. The closure round recommends
+  keeping this ADR *Proposed* until the Fedora regression has run (§10.7).
 * Open: PLAT-DEC-004 (Secure Enclave), PLAT-DEC-009 (declared clipboard
   polling), a notification sink, `PLATFORM_MACOS`, quarantine attribute on
   received files (SEC-006), Developer ID signing and notarization in CI.

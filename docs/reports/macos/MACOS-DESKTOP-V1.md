@@ -11,6 +11,12 @@
 | Decisions | [ADR-0021](../../adr/ADR-0021-macos-desktop-integration.md) (Proposed) |
 | How it works | [architecture/MACOS.md](../../architecture/MACOS.md) |
 
+> **Closure round — 2026-10-03.** §10 records a validation round run after
+> this report was written, against commit `2e41ea2`. It supersedes two rows of
+> §4.2 in part — *Menu-bar icon appears* and *Bonjour from the launchd agent* —
+> with dated notes at those rows; the original rows stand. Its verdict is in
+> §10.9.
+
 Status vocabulary in this report: **EXECUTED/PASS**, **EXECUTED/FAIL**,
 **NOT EXECUTED** (with the reason). Nothing is reported as passing that was
 not run.
@@ -123,6 +129,7 @@ CLI. Window pixels are the app's own snapshots of its window.
 | --- | --- | --- |
 | `Pliwee.app` opens | **EXECUTED/PASS** | process running; window visible; activation policy `regular` |
 | Menu-bar icon appears | **EXECUTED/PASS** | one `NSStatusBarWindow` owned by the app |
+| ↳ *note, 2026-10-03 (§10.4)* | *narrowed* | *that observation was made inside the app's process. It proves the status item was **created**, not that it is **visible**: macOS 26+ lets a person hide an app's menu-bar item, and the window server, without Screen Recording access, exposes no status-layer window to check. Visible on screen is NOT EXECUTED* |
 | Menu opens and shows its items | **NOT EXECUTED** | opening a status-item menu needs a click (Accessibility) or a screenshot (Screen Recording), neither granted. The menu's *data* — status, headline, device rows, each action's ready/blocked state — was logged from the same model calls the menu makes |
 | Status is updated | **EXECUTED/PASS** | `Not running` → `Starting…` → `Disconnected` → `Connected · 1 device` → `Disconnected` as the agent and the peer came and went |
 | Open Pliwee opens/focuses the window | **EXECUTED/PASS** | `open` step: window visible, policy `regular` |
@@ -142,6 +149,7 @@ CLI. Window pixels are the app's own snapshots of its window.
 | Agent log file | **EXECUTED/PASS** | `~/Library/Logs/Pliwee/pliweed.log`, 0600 |
 | `mdns-sd` beside `mDNSResponder` (POC-MAC-02) | **EXECUTED/PASS** from a terminal | the system's `dns-sd -B` lists `_pliwee._tcp` on Wi-Fi and loopback |
 | Bonjour from the launchd agent | **EXECUTED/FAIL** (not observed) | the agent logs "advertising"; its instance never appeared in `dns-sd -B`. See §5.3 |
+| ↳ *note, 2026-10-03 (§10.2)* | *superseded* | *re-measured with the agent started by the background service and the local-network consent given: the instance is advertised, resolved, and its endpoint is the launchd agent. EXECUTED/PASS* |
 | Open at Login (`SMAppService.mainApp`) | **NOT EXECUTED** | registering would change this user's login items; the switch reads the real status (`notRegistered`) |
 | Clipboard send from Mac to a phone | **NOT EXECUTED** end to end | the test peer does not implement `clipboard.v1`; the backend's real round trip passed (§4.1) |
 | A physical Android phone | **NOT EXECUTED** | none attached to this session |
@@ -255,3 +263,238 @@ against the shell that ran the tests.
 | Quarantine attribute on received files | SEC-006 |
 | Developer ID signing, notarization, a macOS CI job | release engineering |
 | A physical-phone pass on a Mac | the certification this report is not |
+
+---
+
+## 10. Closure round — 2026-10-03
+
+A validation round, not a development round: run the gates again on the
+committed tree, close the gaps that can be closed with evidence, and say
+plainly which cannot. Same Mac as §1.
+
+| | |
+| --- | --- |
+| Commit tested | `2e41ea2` on `feature/macos-desktop-v1`; working tree clean; `git diff --check` clean |
+| Identity | `Yuri Converso Sismotto <yuri.sismotto@hotmail.com>` — the e-mail on every commit in the history |
+| Code changes in this round | **none** |
+
+### 10.1 Automated gates, re-run
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Rust format | `cargo fmt --check` | **EXECUTED/PASS** |
+| Rust tests, macOS | `cargo test --workspace --exclude pliwee-gui --exclude pliwee-linux` | **EXECUTED/PASS — 879 passed, 0 failed, 26 ignored** (71 binaries) |
+| Clippy, as specified | `cargo clippy --workspace --exclude pliwee-gui --exclude pliwee-linux --all-targets --all-features -- -D warnings` | **EXECUTED/PASS** |
+| Clippy, including `pliwee-linux` | the same without `--exclude pliwee-linux` (it compiles on macOS) | **EXECUTED/PASS** |
+| `pliwee-linux` unit tests | `cargo test -p pliwee-linux --lib` | **EXECUTED/PASS — 42 passed** |
+| macOS and Unix adapters | `cargo test -p pliwee-macos -p pliwee-unix` | **EXECUTED/PASS — 29 + 7 passed**; 4 ignored are the real keychain/pasteboard round trips, which passed in §4.1 and were not re-run, to leave the user's keychain and clipboard alone |
+| Swift tests | `macos/scripts/test.sh` | **EXECUTED/PASS — 44 tests in 8 suites** |
+| Clean debug build | `rm -rf macos/build && macos/scripts/build-app.sh --debug` | **EXECUTED/PASS** |
+| Universal build | `macos/scripts/build-app.sh --arch universal` | **EXECUTED/PASS** — every executable `x86_64 arm64`; `codesign --verify --strict --deep` passes |
+
+### 10.2 Bonjour with the agent run by the background service
+
+The service type is read from the code, not assumed:
+`desktop/core/src/lib.rs` — `SERVICE_TYPE = "_pliwee._tcp.local."`,
+`LEGACY_SERVICE_TYPE = "_omnibridge._tcp.local."`; `runtime/src/mdns.rs`
+advertises both, instance name = device id.
+
+The agent measured was the one **the user** had turned on from `Pliwee.app`
+before this round (its identity was created at 02:20:38; this round did not
+start it). How it was identified as the service's process:
+
+| Check | Observation |
+| --- | --- |
+| launchd | `launchctl print gui/501/io.github.yurisismotto.pliwee.daemon`: `submitted by smd`, `state = running`, `pid = 31205`, `parent bundle identifier = io.github.yurisismotto.pliwee`, `program identifier = Contents/MacOS/pliweed` |
+| process | `ps`: pid 31205, ppid **1** (launchd), user `yuri.sismotto` |
+| signing | `io.github.yurisismotto.pliwee.daemon`, ad hoc |
+| listener | `lsof -iTCP:55432 -sTCP:LISTEN` → `pliweed 31205 … TCP *:55432 (LISTEN)` |
+| identity | `state.json` device id `8d0cc84faf9c084c3ed410c3ddcc4b7b`, 0 peers |
+
+Observed with the system's own Bonjour client, outside the agent's process:
+
+| Step | Result |
+| --- | --- |
+| `dns-sd -B _pliwee._tcp local.` | instance `8d0cc84f…` on interfaces 1 (`lo0`), 11 (`en0`), 20 (`en5`) |
+| `dns-sd -B _omnibridge._tcp local.` | the same instance on 1, 11, 20 |
+| `dns-sd -L 8d0cc84f… _pliwee._tcp local.` | `8d0cc84f….local.:55432`, TXT `v=1 pv=1-1 id=8d0cc84f… dn=MacBook Pro de Yuri` |
+| `dns-sd -G v4v6 8d0cc84f….local.` | 192.168.68.61 and 192.168.68.69 on `en0` and `en5` — `en0`'s address is 192.168.68.61 |
+| endpoint ↔ daemon | port 55432 is held by pid 31205, the launchd agent |
+
+An entry for `893dbf94…` also appears: that is an identity deleted in the
+first round, still in `mDNSResponder`'s cache from a terminal run, and is not
+counted. The instance counted is the one whose name is the running agent's
+device id.
+
+**Why this differs from §4.2.** The unified log shows System Settings open at
+02:19:50 and, at 02:20:40, `UserEventAgent … LocalNetwork: found bundle id
+io.github.yurisismotto.pliwee.daemon by PID`: local network privacy
+attributed the agent by the signing identifier `build-app.sh` gives it since
+§5.3, and the user's consent was in place. No code change was needed. The
+terminal-run differential (B) was therefore not required.
+
+**Result: EXECUTED/PASS** — observed by a Bonjour client outside the agent,
+on the LAN interfaces, while `pliweed` ran as the service. Observation from a
+*different host* is the Android discovery gate (§10.3, A), not executed.
+
+### 10.3 Physical Android
+
+No Android device was reachable from this session: no `adb`, no USB device,
+and the running agent had no paired peer. Per the round's rule, `fake_phone`
+was not substituted.
+
+| Gate | Result |
+| --- | --- |
+| A Discovery · B Pairing · C TLS/pinning · D Reconnect · E Android→Mac file · F Rejection · G Mac→Android file · H Clipboard Android→Mac · I Clipboard Mac→Android · J Daemon restart · K App restart · L Mac reboot | **NOT EXECUTED** — no physical Android device in this session |
+
+For G: Mac→Android sending exists in the control contract (`Request::Send`)
+and in the app (Send File…), so when it is run it is a real gate, not
+NOT IMPLEMENTED. For I: manual sending exists; automatic sending is
+deliberately absent (PLAT-DEC-009) and is not a defect.
+
+L was not run for a second reason: rebooting would end the working session.
+
+### 10.4 Menu bar
+
+| Check | Result |
+| --- | --- |
+| Interaction capability | `AXIsProcessTrusted() = false`, `CGPreflightScreenCaptureAccess() = false` — preflight calls, which show no prompt |
+| Icon present (status item created) | **EXECUTED/PASS** in round 1, in-process (§4.2) |
+| Icon visible on screen | **NOT EXECUTED** — the window server lists no status-layer window (layer 25 is empty system-wide on macOS 27) and window contents need Screen Recording |
+| Click opens the menu | **NOT EXECUTED** — needs Accessibility or a person |
+| Status, devices, Open Pliwee, Settings, Quit *from the menu* | **NOT EXECUTED** — the actions behind them were exercised through the debug hooks in round 1, which is not the menu |
+
+### 10.5 Fedora / Linux regression
+
+**NOT EXECUTED — requires a Fedora/Linux host.** The Linux-target type-check
+and clippy in §4.1 are not a regression run and are not counted as one.
+
+The commands, from the repository's own scripts and CI, for a Fedora 44 host
+with this branch checked out:
+
+```bash
+# 0. prerequisites (README "Build from source")
+sudo dnf install gcc pkgconf-pkg-config rust cargo gtk4-devel libadwaita-devel glib2-devel \
+                 wl-clipboard upower dbus-daemon
+
+# 1. the workspace — the whole of it, GUI and D-Bus suites included
+cd desktop
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings   # as desktop-quality.yml
+cargo test --locked --workspace                                                # pliwee-linux tray/D-Bus, daemon, CLI, GUI
+cd ..
+
+# 2. the harnesses' own self-tests and the static packaging checks
+packaging/tests/harness-selftests.sh
+packaging/tests/packaging-checks.sh
+
+# 3. the systemd user unit, on this host (gates S1–S3)
+cargo build --release -p pliwee-daemon --manifest-path desktop/Cargo.toml
+packaging/tests/systemd-unit-gates.sh --binary desktop/target/release/pliweed
+
+# 4. packages: bundle, RPM, install/remove/reinstall in a container
+packaging/release/make-source-bundle.sh --output dist
+packaging/fedora/build-rpm.sh dist --output out/fedora44
+packaging/tests/packaging-checks.sh --bundle dist --rpm out/fedora44/pliwee-*.x86_64.rpm
+packaging/tests/install-smoke.sh --image registry.fedoraproject.org/fedora:44 out/fedora44/*.rpm
+
+# 5. lifecycle on a real installed desktop (libvirt guest), then with the phone
+packaging/tests/lifecycle-gates.sh --domain <guest> --distro fedora44 --pkgdir out/fedora44 --evidence <dir>
+packaging/tests/lifecycle-peer-gates.sh --domain <guest> --distro fedora44 --evidence <dir> \
+    --phone-ip <android-ip> --adb-serial <serial>
+```
+
+The tray, clipboard, files, pairing and discovery gates are inside steps 1
+and 5 (L1–L26; L12/L14–L16 need the physical phone). GNOME and KDE tray
+behaviour on a real session is certified by the procedures in
+`docs/certification/linux/gnome/` and `kde/`.
+
+### 10.6 Bugs found in this round
+
+None in the product. One operational side effect of this round's own
+procedure, recorded because it affects the user's running setup:
+
+* **The clean build replaced the binaries of the user's registered agent.**
+  The prescribed `rm -rf macos/build` deleted the bundle the user's agent was
+  registered from, and the rebuild put differently built binaries there:
+  `codesign --verify` on the running agent and app now reports *"the code on
+  disk does not match what is running"*, and rebuilding the same arm64
+  release did not restore a match. The running processes are unaffected; at
+  their next start launchd will refuse the new `pliweed` (`EX_CONFIG`, §5.5)
+  and the keychain will ask about the new binary (§5.6). Recovery: Settings ›
+  **Restart Service**, and *Always Allow* at the keychain prompt. A Developer
+  ID signature would make rebuilds harmless; until then, a bundle that is
+  registered as a service should not be rebuilt in place.
+
+### 10.7 Architectural review of ADR-0021
+
+Checked against the code on `2e41ea2`:
+
+| Property | Evidence | Holds |
+| --- | --- | --- |
+| SwiftUI/AppKit only as front end | `macos/Sources` speaks `pliwee-control` JSON over the socket; no TLS, key, pairing or capability code in Swift | yes |
+| Rust agent is the source of truth | every action is a `Request`; grants re-checked by the agent; the app renders reports | yes |
+| Shared control protocol | `control-protocol.json` checked by both suites (mutation-tested in round 1) | yes |
+| `platform-macos` isolated | every line and dependency `cfg(target_os = "macos")`; `unsafe` confined by `portable_boundary.rs` | yes |
+| `platform-unix` shared | `pliwee-linux` re-exports it; the live-owner rule exists once | yes |
+| No security duplicated in Swift | as above | yes |
+| No Linux architectural regression | `platform/linux.rs` is the moved code; type-checks and lints for Linux | **not runtime-proved** (§10.5) |
+| Coherent macOS lifecycle | register/unregister, restart policy, quit ≠ stop: measured in round 1; service-run discovery measured here | yes, except reboot (NOT EXECUTED) |
+| Runtime paths | `~/Library/…`, 0600/0700 measured | yes |
+| Security boundary preserved | keychain absence rule tested; socket owner-only measured; TLS/pinning exercised with `fake_phone` only | yes, Android not exercised |
+
+**Recommendation: B — keep ADR-0021 *Proposed* until the Fedora regression
+has run.** D2 is not a macOS-only decision: it moved the Linux control
+transport into a new crate and recomposed the Linux daemon's `main`, and the
+ADR's own consequences assert that Linux behaviour is unchanged. Accepting it
+while that assertion has only been type-checked would accept a claim the
+repository's evidence rule (AGENTS.md) says has not been measured. The
+macOS-only decisions (D1, D3–D8) are supported by this round's evidence and
+need no change; once the Fedora run is green, nothing else in the ADR blocks
+acceptance. The status was not changed: that is the owner's decision.
+
+### 10.8 Closure table
+
+| Item | Result | Evidence |
+| --- | --- | --- |
+| Native app | EXECUTED/PASS | round 1 §4.2; the user's release app running (pid 30609) |
+| Menu bar presence | EXECUTED/PASS (created) · NOT EXECUTED (visible) | §10.4 |
+| Menu bar click/open | NOT EXECUTED | no Accessibility / Screen Recording |
+| SwiftUI window | EXECUTED/PASS | round 1 snapshots of all pages |
+| SMAppService | EXECUTED/PASS | round 1 register/unregister; this round: user-registered agent under `smd` |
+| Daemon connectivity | EXECUTED/PASS | round 1; this round: launchd agent listening, resolvable |
+| Control protocol | EXECUTED/PASS | fixture tests both sides (§10.1) |
+| Keychain | EXECUTED/PASS | round 1 §4.1 real round trips; key item present for the running agent |
+| IOKit | EXECUTED/PASS | round 1, real power-source read |
+| NSPasteboard | EXECUTED/PASS | round 1 real round trip (plain + concealed) |
+| TLS | EXECUTED/PASS with `fake_phone` · NOT EXECUTED with Android | round 1 §4.2 |
+| Pinning | EXECUTED/PASS with `fake_phone` · NOT EXECUTED with Android | round 1 §4.2 |
+| Pairing | EXECUTED/PASS with `fake_phone` · NOT EXECUTED with Android | round 1 §4.2 |
+| File receive | EXECUTED/PASS with `fake_phone` · NOT EXECUTED with Android | round 1 §4.2 |
+| File reject | NOT EXECUTED | not run in either round |
+| File send (Mac → peer) | NOT EXECUTED | not run in either round |
+| Clipboard Android → Mac | NOT EXECUTED | §10.3 |
+| Clipboard Mac → Android | NOT EXECUTED | §10.3 |
+| Bonjour via service | EXECUTED/PASS (same host) · NOT EXECUTED (from another host) | §10.2 |
+| Reconnect | NOT EXECUTED | §10.3 |
+| Daemon restart | NOT EXECUTED | §10.3 |
+| App restart | NOT EXECUTED | §10.3 |
+| Mac reboot | NOT EXECUTED | §10.3 |
+| Rust tests | EXECUTED/PASS | §10.1 |
+| Swift tests | EXECUTED/PASS | §10.1 |
+| arm64 build | EXECUTED/PASS | §10.1 |
+| universal build | EXECUTED/PASS (built, verified) · NOT EXECUTED (x86_64 run) | §10.1, round 1 |
+| Fedora regression | NOT EXECUTED | §10.5 |
+| ADR status | Proposed — recommendation B | §10.7 |
+
+### 10.9 Verdict
+
+**MACOS DESKTOP V1: CONDITIONALLY ACCEPTED.**
+
+Every gate that could be executed here passed, nothing failed, and the
+principal macOS gap of round 1 — discovery from the background service — is
+closed with evidence. It is not CERTIFIED, because mandatory gates remain
+NOT EXECUTED: the physical Android matrix (A–L), the menu-bar click, a Mac
+reboot, and the Fedora regression. The conditions for certification are
+exactly those runs; none of them is expected to need a design change, and
+any that fails reopens this verdict.
