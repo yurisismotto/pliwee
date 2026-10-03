@@ -377,7 +377,14 @@ fn the_adapter_and_binary_crates_at_least_deny_unsafe_code() {
     // cannot be relaxed locally. `deny` means any `unsafe` needs a
     // deliberate, reviewable `#[allow(unsafe_code)]` with a justification.
     let root = desktop_root();
-    for krate in ["platform-linux", "daemon", "cli", "gui"] {
+    for krate in [
+        "platform-unix",
+        "platform-linux",
+        "platform-macos",
+        "daemon",
+        "cli",
+        "gui",
+    ] {
         let manifest =
             std::fs::read_to_string(root.join(krate).join("Cargo.toml")).expect("read manifest");
         assert!(
@@ -387,23 +394,122 @@ fn the_adapter_and_binary_crates_at_least_deny_unsafe_code() {
     }
 }
 
-#[test]
-fn no_crate_actually_uses_unsafe_today() {
-    // Wave 0 adds no `unsafe` anywhere. The policy exists so a future adapter
-    // *can*; if this test starts failing, that is a real architectural event
-    // and wants a conversation, not a silenced assertion.
+/// The files allowed to contain `unsafe`, each with the reason it needs FFI.
+///
+/// The macOS adapter was the architectural event the test below anticipated:
+/// IOKit's power-source API is C, and `NSPasteboardTypeString` is an
+/// AppKit `extern` static. Both are confined to one module each, every block
+/// carries a `// SAFETY:` comment, and adding a file here is a reviewed
+/// change to this list rather than a quiet `#[allow]` somewhere else.
+const UNSAFE_ALLOWED: &[(&str, &str)] = &[
+    (
+        "platform-macos/src/battery.rs",
+        "IOKit IOPSCopyPowerSourcesInfo / IOPSCopyPowerSourcesList / IOPSGetPowerSourceDescription",
+    ),
+    (
+        "platform-macos/src/clipboard.rs",
+        "reading the AppKit extern static NSPasteboardTypeString",
+    ),
+];
+
+/// Lines that are code — not comments — and mention `unsafe`.
+fn unsafe_lines(path: &str, text: &str) -> Vec<String> {
     let mut found = Vec::new();
-    for krate in PORTABLE_CRATES
-        .iter()
-        .chain(["runtime", "platform-linux", "daemon", "cli", "gui"].iter())
-    {
+    for (number, line) in text.lines().enumerate() {
+        let code = line.trim_start();
+        if code.starts_with("//") || code.starts_with("*") {
+            continue;
+        }
+        if code.contains("unsafe ") || code.contains("allow(unsafe_code)") {
+            found.push(format!("{}:{}: {}", path, number + 1, code.trim()));
+        }
+    }
+    found
+}
+
+#[test]
+fn no_crate_uses_unsafe_outside_the_declared_ffi_modules() {
+    // Wave 0 added no `unsafe` anywhere. The policy existed so a future
+    // adapter *could*; the macOS adapter did, in exactly the files in
+    // `UNSAFE_ALLOWED`. Anything else failing here is a new architectural
+    // event and wants a conversation, not a silenced assertion.
+    let mut found = Vec::new();
+    for krate in PORTABLE_CRATES.iter().chain(
+        [
+            "runtime",
+            "platform-unix",
+            "platform-linux",
+            "platform-macos",
+            "daemon",
+            "cli",
+            "gui",
+        ]
+        .iter(),
+    ) {
         for (path, text) in crate_sources(krate) {
+            if UNSAFE_ALLOWED.iter().any(|(allowed, _)| *allowed == path) {
+                continue;
+            }
+            found.extend(unsafe_lines(&path, &text));
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "unsafe appeared outside the declared FFI modules:\n  {}",
+        found.join("\n  ")
+    );
+}
+
+#[test]
+fn every_declared_ffi_module_exists_uses_unsafe_and_justifies_each_block() {
+    // An entry that no longer needs `unsafe` must leave the list — a stale
+    // allowance is a hole waiting for code — and every `unsafe` block in a
+    // listed file must be preceded by a `// SAFETY:` comment saying why it is
+    // sound.
+    let root = desktop_root();
+    for (path, why) in UNSAFE_ALLOWED {
+        let text = std::fs::read_to_string(root.join(path))
+            .unwrap_or_else(|e| panic!("{path} ({why}) is listed but cannot be read: {e}"));
+        assert!(
+            !unsafe_lines(path, &text).is_empty(),
+            "{path} is listed in UNSAFE_ALLOWED but contains no unsafe; remove it"
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let code = line.trim_start();
+            if code.starts_with("//") || !code.contains("unsafe {") {
+                continue;
+            }
+            let justified = lines[..i]
+                .iter()
+                .rev()
+                .take_while(|l| l.trim_start().starts_with("//"))
+                .any(|l| l.contains("SAFETY:"));
+            assert!(
+                justified,
+                "{path}:{}: an unsafe block without a `// SAFETY:` comment directly above it",
+                i + 1
+            );
+        }
+    }
+}
+
+#[test]
+fn the_platform_is_chosen_in_one_place_per_binary() {
+    // The daemon and the CLI each pick their adapter by `target_os` in one
+    // module, and nowhere else. A `target_os` scattered through `main.rs`
+    // would be the first step back to a daemon that knows which desktop it is
+    // on in a hundred places.
+    let allowed = ["daemon/src/platform/mod.rs", "cli/src/main.rs"];
+    let mut found = Vec::new();
+    for krate in ["daemon", "cli", "runtime"] {
+        for (path, text) in crate_sources(krate) {
+            if allowed.contains(&path.as_str()) {
+                continue;
+            }
             for (number, line) in text.lines().enumerate() {
                 let code = line.trim_start();
-                if code.starts_with("//") || code.starts_with("*") {
-                    continue;
-                }
-                if code.contains("unsafe ") || code.contains("allow(unsafe_code)") {
+                if !code.starts_with("//") && code.contains("target_os") {
                     found.push(format!("{}:{}: {}", path, number + 1, code.trim()));
                 }
             }
@@ -411,7 +517,7 @@ fn no_crate_actually_uses_unsafe_today() {
     }
     assert!(
         found.is_empty(),
-        "unsafe appeared in the workspace:\n  {}",
+        "target_os outside the platform selection points:\n  {}",
         found.join("\n  ")
     );
 }

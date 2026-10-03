@@ -1,0 +1,64 @@
+[package]
+name = "pliwee-macos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints.rust]
+# An adapter crate, so `unsafe` is `deny` rather than `forbid` — the rule the
+# workspace manifest set out for exactly this crate ("Security.framework,
+# IOKit all need FFI"). Every `unsafe` here sits in a module that says, at its
+# top, why it needs FFI, carries `#[allow(unsafe_code)]` on the narrowest item
+# that can hold it, and has a `// SAFETY:` comment on each block.
+# `core/tests/portable_boundary.rs` holds the list of those modules, so a new
+# one is a reviewed change rather than a quiet one.
+unsafe_code = "deny"
+
+[lints.clippy]
+todo = "warn"
+unwrap_used = "warn"
+
+# Every dependency is macOS-only, and so is every line of code (`lib.rs` is
+# `#![cfg(target_os = "macos")]`). On Linux this crate is an empty library
+# with no dependencies at all: `cargo build --workspace` on Fedora compiles
+# nothing new, and the Linux binaries link nothing from Apple.
+#
+# The lockfile still records these crates, and `cargo vendor` still copies
+# them into the Linux source bundle, exactly as it already copies the
+# `windows-sys` crates `tokio` names for Windows. They are never compiled
+# there.
+[target.'cfg(target_os = "macos")'.dependencies]
+pliwee-core = { version = "1.0.0", path = "../core", features = ["unix-fs"] }
+pliwee-control = { version = "1.0.0", path = "../control" }
+pliwee-proto = { version = "1.0.0", path = "../proto" }
+pliwee-unix = { version = "1.0.0", path = "../platform-unix" }
+# The protocol halves only. `default-features = false` is the point: the
+# Linux backends (UPower over D-Bus, `wl-clipboard`, XFIXES) are what this
+# crate replaces, and asking for them here would compile them into the macOS
+# adapter for nothing.
+pliwee-capability-battery = { version = "1.0.0", path = "../capabilities/battery", default-features = false }
+pliwee-capability-clipboard = { version = "1.0.0", path = "../capabilities/clipboard", default-features = false }
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt", "time", "process", "macros"] }
+tracing = "0.1"
+
+# Keychain generic passwords, through the crate's safe wrappers
+# (`SecItemAdd`/`SecItemCopyMatching`/`SecItemDelete` underneath). The
+# identity's private key is stored here rather than in a file. No `unsafe`
+# in this crate is needed for it.
+security-framework = "3"
+# The `CFDictionary`/`CFString`/`CFNumber` reading IOKit's power-source
+# descriptions needs. Already a dependency of `security-framework`.
+core-foundation = "0.10"
+# `NSPasteboard`, the general pasteboard, and `NSPasteboardItem` to write to it
+# atomically. `default-features = false` and only those two class features:
+# `objc2-app-kit` is generated from the whole AppKit SDK, and its default
+# feature set compiles all of it.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
