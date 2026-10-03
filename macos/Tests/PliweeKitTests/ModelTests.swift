@@ -256,3 +256,33 @@ func card(
         #expect(DesignTokens.rgb("nope") == nil)
     }
 }
+
+@Suite struct SingleInstanceTests {
+    let t0 = Date(timeIntervalSince1970: 1_000)
+
+    @Test func aLoneInstanceKeepsRunning() {
+        #expect(SingleInstance.instanceToYieldTo(selfPID: 10, running: [.init(pid: 10, launched: t0)]) == nil)
+        #expect(SingleInstance.instanceToYieldTo(selfPID: 10, running: []) == nil)
+    }
+
+    @Test func aNewcomerYieldsToTheRunningInstance() {
+        let running = [SingleInstance.Instance(pid: 10, launched: t0),
+                       .init(pid: 20, launched: t0.addingTimeInterval(60))]
+        #expect(SingleInstance.instanceToYieldTo(selfPID: 20, running: running)?.pid == 10)
+    }
+
+    @Test func withSeveralOthersTheEarliestLaunchedIsKept() {
+        let running = [SingleInstance.Instance(pid: 30, launched: t0.addingTimeInterval(30)),
+                       .init(pid: 10, launched: t0),
+                       .init(pid: 40, launched: t0.addingTimeInterval(90))]
+        #expect(SingleInstance.instanceToYieldTo(selfPID: 40, running: running)?.pid == 10)
+        #expect(SingleInstance.instanceToYieldTo(selfPID: 30, running: running)?.pid == 10)
+    }
+
+    @Test func anInstanceWithoutALaunchDateIsNotPreferred() {
+        let running = [SingleInstance.Instance(pid: 10, launched: nil),
+                       .init(pid: 20, launched: t0),
+                       .init(pid: 30, launched: t0.addingTimeInterval(5))]
+        #expect(SingleInstance.instanceToYieldTo(selfPID: 30, running: running)?.pid == 20)
+    }
+}

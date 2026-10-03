@@ -46,6 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WindowPresenter, NSWin
     private var offerPanel: NSPanel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A second copy of the app must not become a second menu-bar item or
+        // a second approval provider: hand over to the running one and quit,
+        // before the model has touched the agent. See PliweeKit/SingleInstance.
+        if yieldToRunningInstance() { return }
         // No Dock icon while only the menu-bar item is showing.
         // `LSUIElement` says the same thing in Info.plist; this also covers
         // `swift run`, where there is no Info.plist.
@@ -65,6 +69,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WindowPresenter, NSWin
     #if DEBUG
     var debugMainWindow: NSWindow? { mainWindow }
     #endif
+
+    /// `true` when another instance was already running and this one is
+    /// quitting in its favour.
+    private func yieldToRunningInstance() -> Bool {
+        guard let id = Bundle.main.bundleIdentifier else { return false }
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: id)
+        let instances = running.map {
+            SingleInstance.Instance(pid: $0.processIdentifier, launched: $0.launchDate)
+        }
+        guard let keep = SingleInstance.instanceToYieldTo(
+            selfPID: ProcessInfo.processInfo.processIdentifier,
+            running: instances
+        ), let other = running.first(where: { $0.processIdentifier == keep.pid }) else {
+            return false
+        }
+        // Opening the running copy sends it a reopen event, which shows its
+        // window (`applicationShouldHandleReopen`): what the person asked for.
+        if let url = other.bundleURL {
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            other.activate()
+        }
+        NSApp.terminate(nil)
+        return true
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
