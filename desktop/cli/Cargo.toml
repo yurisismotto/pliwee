@@ -30,10 +30,17 @@ path = "src/main.rs"
 # Wave 0 this was `pliwee-daemon`, which meant the CLI inherited mDNS, the
 # capability crates and UPower to obtain some `serde` structs (audit C1).
 pliwee-control = { version = "1.0.0", path = "../control" }
-# `default-features = false` turns off the crate's `tray` feature. A command
-# that runs and exits has no use for a tray icon.
-pliwee-linux = { version = "1.0.0", path = "../platform-linux", default-features = false }
 tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "io-std", "signal"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
+
+# The platform adapter, for the control socket's location and nothing else.
+# Every target that is not macOS keeps the Linux adapter it has always had.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+# `default-features = false` turns off the crate's `tray` feature. A command
+# that runs and exits has no use for a tray icon.
+pliwee-linux = { version = "1.0.0", path = "../platform-linux", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+pliwee-macos = { version = "1.0.0", path = "../platform-macos" }

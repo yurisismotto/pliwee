@@ -34,7 +34,6 @@ pliwee-core = { version = "1.0.0", path = "../core" }
 pliwee-proto = { version = "1.0.0", path = "../proto" }
 pliwee-control = { version = "1.0.0", path = "../control" }
 pliwee-runtime = { version = "1.0.0", path = "../runtime", default-features = false }
-pliwee-linux = { version = "1.0.0", path = "../platform-linux" }
 pliwee-capability-battery = { version = "1.0.0", path = "../capabilities/battery" }
 pliwee-capability-clipboard = { version = "1.0.0", path = "../capabilities/clipboard" }
 pliwee-capability-files = { version = "1.0.0", path = "../capabilities/files" }
@@ -50,6 +49,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 qrcode = { version = "0.14", default-features = false }
 anyhow = "1"
+
+# The platform adapter, chosen by target in `src/platform/mod.rs` and nowhere
+# else. Every target that is not macOS keeps the Linux adapter it has always
+# had, so this split changes nothing about what builds on Linux.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+pliwee-linux = { version = "1.0.0", path = "../platform-linux" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+pliwee-macos = { version = "1.0.0", path = "../platform-macos" }
 
 [dev-dependencies]
 tempfile = "3"

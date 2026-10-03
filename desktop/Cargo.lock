@@ -1481,6 +1481,7 @@ dependencies = [
  "clap",
  "pliwee-control",
  "pliwee-linux",
+ "pliwee-macos",
  "serde_json",
  "tokio",
 ]
@@ -1535,6 +1536,7 @@ dependencies = [
  "pliwee-control",
  "pliwee-core",
  "pliwee-linux",
+ "pliwee-macos",
  "pliwee-proto",
  "pliwee-runtime",
  "prost",

@@ -1,26 +1,28 @@
 //! `pliweed` — the user-session daemon.
 //!
-//! Runs unprivileged under `systemd --user`. It binds a high TCP port, a Unix
-//! socket in `XDG_RUNTIME_DIR`, and an mDNS responder. It needs no root, no
-//! capabilities, and no system-wide state.
+//! Runs unprivileged, as the user: under `systemd --user` on Linux, as a
+//! per-user `launchd` agent on macOS. It binds a high TCP port, a Unix socket
+//! in a directory only its user can reach, and an mDNS responder. It needs no
+//! root, no capabilities, and no system-wide state.
+//!
+//! Nothing in this file names a platform. Every question with a different
+//! answer on Linux and on macOS is asked of [`platform`], which is where the
+//! answers are.
 
 use std::sync::Arc;
 
 use clap::Parser;
-use pliwee_capability_battery::{BatteryCapability, BatteryState, LocalBattery, UPowerReader};
+use pliwee_capability_battery::{BatteryCapability, BatteryState};
 use pliwee_capability_clipboard::{ClipboardCapability, ClipboardManager};
 use pliwee_capability_files::{
     Destination, FilesCapability, FilesConfig, StreamRole, TransferApproval, TransferManager,
-};
-use pliwee_capability_notifications::backend::{
-    dbus::DbusSink, logind::LogindLock, LockSource, NoSink, NotificationSink, UnknownLock,
 };
 use pliwee_capability_notifications::{NotificationManager, NotificationsCapability};
 use pliwee_control::transport::ControlTransport;
 use pliwee_core::capability::CapabilityRegistry;
 use pliwee_daemon::{
     approval::FileApproval,
-    listener, mdns, server,
+    listener, mdns, platform, server,
     state::{DaemonState, LocalStateReport},
 };
 use tokio_rustls::TlsAcceptor;
@@ -47,7 +49,7 @@ struct Args {
 
     /// Directory for received files.
     ///
-    /// Defaults to `<XDG downloads>/Pliwee`. Peers can never influence this:
+    /// Defaults to `<XDG downloads>/Pliwee` (`~/Downloads/Pliwee` on macOS). Peers can never influence this:
     /// an offer carries a filename and no path at all.
     #[arg(long)]
     download_dir: Option<std::path::PathBuf>,
@@ -71,15 +73,14 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| args.log.clone().into()),
-        )
-        // No timestamps: journald adds its own, and duplicating them makes
-        // `journalctl` output harder to read.
-        .without_time()
-        .init();
+    // stderr for the journal on Linux; on macOS the agent's own log file
+    // when `launchd` started it, stderr otherwise.
+    platform::init_logging(&args.log);
+    tracing::info!(
+        platform = platform::NAME,
+        version = env!("CARGO_PKG_VERSION"),
+        "pliweed starting"
+    );
 
     // Installing the process-wide crypto provider explicitly, rather than
     // relying on a default, so that the choice of backend is visible in the
@@ -88,68 +89,20 @@ async fn main() -> anyhow::Result<()> {
         .install_default()
         .map_err(|_| anyhow::anyhow!("a rustls crypto provider was already installed"))?;
 
-    // ---- local state: carry an OmniBridge identity over first -------------
-    // ADR-0020 D9/D12. Before the store is opened on `~/.local/share/pliwee`,
-    // an identity still under `~/.local/share/omnibridge` is copied across —
-    // or, if it exists and cannot be read, startup stops here and names it.
-    // Opening the new directory without asking would be a "first run" over a
-    // live identity: a new key, and every pairing silently gone.
-    //
-    // An explicit `--data-dir` is the operator's own choice of directory and
-    // is used exactly as given.
-    let (data_dir, migrated_from) = match args.data_dir {
-        Some(dir) => (dir, None),
-        None => {
-            let dirs = pliwee_linux::DataDirs::from_env();
-            let origin = pliwee_linux::migrate_data_dir(&dirs).map_err(|e| {
-                tracing::error!(path = %e.path.display(), "refusing to start: {e}");
-                anyhow::anyhow!("{e}")
-            })?;
-            let report = match &origin {
-                pliwee_linux::DataDirOrigin::Migrated(r) => {
-                    tracing::info!(
-                        source = %r.source.display(),
-                        destination = %dirs.canonical.display(),
-                        "migrated from {}: identity and trust store copied into {}; \
-                         the source directory was not modified",
-                        r.source.display(),
-                        dirs.canonical.display()
-                    );
-                    Some(migration_report(r, true))
-                }
-                pliwee_linux::DataDirOrigin::Existing {
-                    migrated_from: Some(r),
-                } => {
-                    tracing::info!(
-                        source = %r.source.display(),
-                        migrated_at_unix = r.migrated_at_unix,
-                        "local state was migrated from {} by an earlier start; \
-                         nothing to migrate",
-                        r.source.display()
-                    );
-                    Some(migration_report(r, false))
-                }
-                pliwee_linux::DataDirOrigin::Existing {
-                    migrated_from: None,
-                }
-                | pliwee_linux::DataDirOrigin::NoLegacyState => None,
-            };
-            (dirs.canonical, report)
-        }
-    };
-    // ---- systemd: an account still enabled under the OmniBridge name ------
-    // Read-only. The package ships omnibridged.service as an alias of
-    // pliweed.service, so such an account starts this daemon at login; what it
-    // cannot do is report itself enabled under the new name. Say so, once,
-    // with the one command that fixes it (ADR-0020; rebrand Wave 7, B5).
-    pliwee_linux::systemd_transition::log(&pliwee_linux::systemd_transition::classify(
-        &pliwee_linux::systemd_transition::wants_dir_from_env(),
-    ));
+    // ---- local state ------------------------------------------------------
+    // On Linux this is where an OmniBridge identity is carried over before
+    // the store is opened (ADR-0020 D9/D12), and where startup stops if one
+    // exists and cannot be read. On macOS there is nothing to carry over. An
+    // explicit `--data-dir` is the operator's own choice of directory and is
+    // used exactly as given on both.
+    let (data_dir, migrated_from) = platform::resolve_data_dir(args.data_dir)?;
+    platform::startup_notes();
 
-    // The Linux adapter composes the store: XDG paths, 0600/0700 modes,
-    // `Platform::Linux`, `/etc/hostname`. `pliwee-core` decides the policy,
-    // this decides where and how.
-    let store = pliwee_linux::open_store(&data_dir)?;
+    // The adapter composes the store. On Linux: XDG paths, 0600/0700 modes,
+    // `Platform::Linux`, `/etc/hostname`. On macOS: `~/Library/Application
+    // Support`, the private key in the login keychain, the computer name.
+    // `pliwee-core` decides the policy, the adapter decides where and how.
+    let store = platform::open_store(&data_dir)?;
 
     // A `--port` override applies to this run only. Silently rewriting the
     // user's stored configuration from a command-line flag is a surprise
@@ -178,19 +131,8 @@ async fn main() -> anyhow::Result<()> {
     // machine *receive* the phone's battery, and a machine with no battery of
     // its own still wants that. What absence removes is the local *source* —
     // so we send nothing rather than sending a fabricated 0%.
-    match UPowerReader::detect().await {
-        LocalBattery::Present(upower) => {
-            tracing::info!("UPower available; this machine will report its own battery");
-            battery = battery.with_local_source(Arc::new(upower));
-        }
-        LocalBattery::Absent => {
-            tracing::info!(
-                "UPower available; no system battery present; battery.v1 is receive-only"
-            );
-        }
-        LocalBattery::Unavailable => {
-            tracing::info!("no local battery source; battery.v1 is receive-only");
-        }
+    if let Some(source) = platform::local_battery().await {
+        battery = battery.with_local_source(source);
     }
 
     // files.v1. Note what is NOT here: an entry in `auto_grant`. Writing a
@@ -209,21 +151,7 @@ async fn main() -> anyhow::Result<()> {
         ..FilesConfig::default()
     };
     if let Err(e) = destination.prepare() {
-        if e.kind() == std::io::ErrorKind::ReadOnlyFilesystem {
-            // The packaged user unit grants ~/Downloads only; any other
-            // download directory needs its own grant (pliweed.service).
-            tracing::warn!(
-                error = %e,
-                dir = %destination.dir().display(),
-                "could not prepare the download directory: the service's sandbox does not allow \
-                 writing there, so received files cannot be stored. To allow it, run \
-                 `systemctl --user edit pliweed.service`, add `[Service]` and \
-                 `ReadWritePaths=-{}`, then `systemctl --user restart pliweed.service`",
-                destination.dir().parent().unwrap_or(destination.dir()).display()
-            );
-        } else {
-            tracing::warn!(error = %e, "could not prepare the download directory");
-        }
+        platform::explain_download_dir_error(&e, destination.dir());
     }
     tracing::info!(
         download_dir = %destination.dir().display(),
@@ -262,7 +190,7 @@ async fn main() -> anyhow::Result<()> {
     // report what this session can actually do — including, on GNOME, that it
     // cannot report clipboard changes at all — instead of each command
     // discovering it separately.
-    let clipboard_backend = pliwee_capability_clipboard::backend::detect();
+    let clipboard_backend = platform::clipboard_backend();
     if let Err(why) = clipboard_backend.watch_availability() {
         tracing::info!(
             reason = %why,
@@ -291,26 +219,14 @@ async fn main() -> anyhow::Result<()> {
     // what roles exist to express (ADR-0017). Registering it unconditionally
     // is deliberate — gating the handshake on a platform condition the user
     // can change at 14:32 would mean a reconnect were needed to pick it up.
-    let notification_sink: Arc<dyn NotificationSink> = match DbusSink::connect().await {
-        Some(sink) => Arc::new(sink),
-        // Not a sink that accepts and discards: that would announce `SINK` and
-        // then swallow every notification a phone sent, with the phone having
-        // no way to know. `NoSink` reports unavailable, the role narrows, and
-        // the peer is told the truth.
-        None => Arc::new(NoSink),
-    };
+    //
+    // When there is no notification server the adapter returns `NoSink`, not a
+    // sink that accepts and discards — see `platform::notification_sink`.
+    let notification_sink = platform::notification_sink().await;
     // A session whose lock state cannot be determined is treated as locked, by
     // the type rather than by a check a caller could forget. It is the
     // fail-closed direction and it is the one a privacy control must take.
-    let notification_lock: Arc<dyn LockSource> = match LogindLock::connect().await {
-        Some(lock) => Arc::new(lock),
-        None => {
-            tracing::warn!(
-                "no logind session to read LockedHint from; this desktop will                  be treated as locked, so notifications will be reduced"
-            );
-            Arc::new(UnknownLock)
-        }
-    };
+    let notification_lock = platform::lock_source().await;
     let notifications = NotificationManager::new(
         Arc::clone(&notification_sink),
         Arc::clone(&notification_lock),
@@ -398,7 +314,7 @@ async fn main() -> anyhow::Result<()> {
     // `ControlTransport` seam. A failure to bind because another agent
     // already owns the endpoint is fatal and is *not* worked around by
     // choosing a different name — see `pliwee_control::transport`.
-    let transport = pliwee_linux::default_control_transport();
+    let transport = platform::control_transport()?;
     let control_listener = match ControlTransport::bind(&transport) {
         Ok(l) => l,
         Err(e @ pliwee_control::transport::BindError::AlreadyOwned { .. }) => {
@@ -429,44 +345,12 @@ async fn main() -> anyhow::Result<()> {
 
     // ---- the desktop shell ------------------------------------------------
     //
-    // A `StatusNotifierItem` on the session bus, which is how KDE Plasma shows
-    // an application in its system tray. The daemon owns it because the daemon
-    // is the process that is always here: the GUI is two windows a person
-    // opens and closes, and keeping one alive forever to hold an icon would
-    // have made Pliwee a product with two resident processes.
-    //
-    // Held, never awaited, and deliberately **not** in the `select!` below.
-    // Everything in that race is load-bearing — the network listener, the
-    // control server, the interrupt — and the first of them to finish ends the
-    // process. A tray icon is not in that class: if the session has no tray
-    // host, or the shell restarts, or the item cannot be published at all, the
-    // right outcome is a log line and a daemon that goes on moving files.
-    // `tray::spawn` supervises its own task so that even a panic is written
-    // down rather than swallowed.
-    //
-    // On a session with no `org.kde.StatusNotifierWatcher` — every GNOME
-    // session, which is most of them — this publishes the item, finds no host,
-    // says so once, and then waits event-driven for one to appear. It never
-    // polls.
-    let _tray = pliwee_linux::tray::spawn(pliwee_linux::tray::ActivatorChoice::SessionBus);
-
-    // ---- D-Bus activation self-heal ---------------------------------------
-    //
-    // A package installs the GUI's D-Bus service file as root, and the user's
-    // *already running* session bus does not read it until something says so.
-    // Until then the tray item above activates nothing: clicking Pliwee on
-    // a correctly installed machine returns ServiceUnknown. Root cannot fix
-    // that — it has no route to a user's session bus — but this process runs
-    // as the user, in the session, and can. Audit §8.2.
-    //
-    // At most one ReloadConfig, on the session bus only, and the outcome is a
-    // log line whatever it is. Spawned rather than awaited because a bus that
-    // is slow to answer is not a reason for the listener below to start late,
-    // and because there is nothing downstream that depends on the answer.
-    tokio::spawn(async {
-        let outcome = pliwee_linux::activation::self_heal_desktop_activation().await;
-        pliwee_linux::activation::log(&outcome);
-    });
+    // On Linux: the KDE/GNOME tray item and the D-Bus activation self-heal,
+    // both owned by the agent because it is the process that is always here.
+    // On macOS: nothing — the menu-bar item is `Pliwee.app`'s. Held, never
+    // awaited, and deliberately not in the `select!` below: a tray icon is
+    // not load-bearing, and losing one must not end the process.
+    let _desktop_shell = platform::spawn_desktop_shell();
 
     let net = tokio::spawn(listener::run(bound.listeners, acceptor, Arc::clone(&state)));
     let ctl = tokio::spawn(server::run(control_listener, Arc::clone(&state)));
@@ -483,17 +367,6 @@ async fn main() -> anyhow::Result<()> {
     // is, and a named pipe has no file to unlink.
     transport.release();
     Ok(())
-}
-
-fn migration_report(
-    record: &pliwee_linux::MigrationRecord,
-    this_run: bool,
-) -> pliwee_daemon::control::MigrationReport {
-    pliwee_daemon::control::MigrationReport {
-        source: record.source.display().to_string(),
-        migrated_at_unix: record.migrated_at_unix,
-        this_run,
-    }
 }
 
 /// Interrupted OmniBridge transfers left in the download directory in use and

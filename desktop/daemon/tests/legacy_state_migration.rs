@@ -10,6 +10,18 @@
 //! The legacy state here is written by `Store::open`, the code path OmniBridge
 //! 1.0.0 itself used. It is *not* the captured state of a real v1.0.0 install;
 //! that fixture comes from packaged guests and is a separate gate.
+//!
+//! **Linux only.** What this gate measures — `~/.local/share/omnibridge`
+//! carried into `~/.local/share/pliwee`, a socket under `XDG_RUNTIME_DIR` — is
+//! the Linux adapter's behaviour. OmniBridge never shipped on macOS, so the
+//! macOS agent has nothing to migrate and keeps its state under
+//! `~/Library/Application Support`; run there, this file would measure the
+//! absence of a feature the platform does not have. The whole file is
+//! compiled out on macOS rather than skipped test by test, so it cannot
+//! report a PASS for something that did not run — the same classification
+//! `capabilities/notifications/tests/real_dbus.rs` uses for its feature.
+
+#![cfg(not(target_os = "macos"))]
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;

@@ -11,9 +11,17 @@ use pliwee_control::{
     BatteryReport, ClipboardFlag, ClipboardStatusReport, DeviceReport, Event, NotificationSetting,
     NotificationsStatusReport, Request, Response, TransferReport,
 };
-use pliwee_linux::control_socket_path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+
+// The platform adapter: where the agent's socket is, and what to say when it
+// is not there. Chosen by target here and in `Cargo.toml`, nowhere else.
+#[cfg(not(target_os = "macos"))]
+use pliwee_linux as platform;
+#[cfg(target_os = "macos")]
+use pliwee_macos as platform;
+
+use platform::control_socket_path;
 
 #[derive(Parser, Debug)]
 #[command(name = "pliwee", about = "Pliwee control", version)]
@@ -252,9 +260,9 @@ async fn main() -> anyhow::Result<()> {
     let path = control_socket_path();
     let stream = UnixStream::connect(&path).await.map_err(|e| {
         anyhow::anyhow!(
-            "cannot reach the daemon at {} ({e}).\n\
-             Start it with: systemctl --user start pliweed.service",
-            path.display()
+            "cannot reach the daemon at {} ({e}).\n{}",
+            path.display(),
+            platform::START_HINT
         )
     })?;
 
