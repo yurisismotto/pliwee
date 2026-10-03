@@ -17,6 +17,11 @@
 > with dated notes at those rows; the original rows stand. Its verdict is in
 > §10.9.
 
+> **Physical-Android round — 2026-10-03.** §11 records a third round, with a
+> physical Android device, the menu bar observed by the owner, and a real
+> reboot. It closes the device gates of §10.3 and §10.4, finds two defects
+> (both fixed), and updates the verdict in §11.6.
+
 Status vocabulary in this report: **EXECUTED/PASS**, **EXECUTED/FAIL**,
 **NOT EXECUTED** (with the reason). Nothing is reported as passing that was
 not run.
@@ -498,3 +503,133 @@ NOT EXECUTED: the physical Android matrix (A–L), the menu-bar click, a Mac
 reboot, and the Fedora regression. The conditions for certification are
 exactly those runs; none of them is expected to need a design change, and
 any that fails reopens this verdict.
+
+---
+
+## 11. Physical-Android round — 2026-10-03
+
+| | |
+| --- | --- |
+| Commit at start | `ffb4bbb`, working tree clean; identity `Yuri Converso Sismotto <yuri.sismotto@hotmail.com>` |
+| Android device | Samsung **SM-X620** (Galaxy Tab S10 FE, Wi-Fi), **Android 16** (SDK 36) |
+| Pliwee Android | `1.1.1` (versionCode 2), installed 2026-10-03 02:46 |
+| Network | same Wi-Fi /22: tablet 192.168.68.63, Mac `en0` 192.168.68.61. The Mac is **multi-homed**: a USB Ethernet adapter (`en5`, AX88179B) is also on 192.168.68.69 in the same /22, and the Mac's route to the tablet uses `en5` |
+| Evidence | Android platform-tools (`adb` 37.0.1, installed for this round with the owner's consent) for `logcat`, `screencap`, `uiautomator` and on-device `sha256sum`; the agent's log and the CLI on the Mac. `fake_phone` was not used |
+| Owner actions | pairing, sharing files from the tablet, Accept/Decline on the Mac, toggling the service, quitting and reopening the app, the menu-bar observations, the reboot |
+
+### 11.1 Results
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| A Discovery (Android finds the Mac by mDNS) | **EXECUTED/PASS** | The Android system log shows `MdnsDiscoveryManager` registering listeners for `_pliwee._tcp.local` and `_omnibridge._tcp.local`; the app logs `DISCOVERY round=… endpoints=N` on every reconnect round and, at 11:33, `endpoints=4` — more than the single remembered address of earlier rounds — followed by `CONNECT_SUCCESS`. Caveat: the app does not log whether the address it dialled came from discovery or from memory. By design the app has **no pre-pairing device list** — discovery re-finds an already-paired computer (`PliweeApp.candidateAddresses`, from round 2); pairing is by QR. See also §11.3 |
+| B Pairing | **EXECUTED/PASS** | Paired by the owner by QR at 02:48; Mac: `session established device=ab1c50d9… peer=0ABF FA76 C715 32D0 profile=pliwee alpn=pliwee/1`; `pliwee devices`: SM-X620, platform `android`, paired. Tablet: the Mac with its fingerprint `9D39 5366 85A4 8134`. Persisted across a service restart and a reboot (§11.2) |
+| C TLS / pinning / trust | **EXECUTED/PASS** | Mac: sessions only via the pinned listener, `alpn=pliwee/1`, peer identified by fingerprint. Tablet UI, from its own session: "Secure connection — Direct connection · TLS 1.3 · Pinned identity · Local network", and "Paired directly over your local network and pinned to this key". No secret was read or recorded |
+| D Reconnect | **EXECUTED/PASS** | Four reconnections with the same peer and no new pairing: after a ~50-minute network outage (03:59), after Doze (11:15), after a service restart (11:33), after the reboot (12:21) |
+| E Android → Mac file, accepted | **EXECUTED/PASS** | `pliwee-accept-test.bin`, 1 048 576 bytes, created on the tablet, SHA-256 `1d6ba715…0db331`; shared from My Files → Pliwee by the owner; Accept on the Mac's prompt; agent: `completed`, stored at `~/Downloads/Pliwee/pliwee-accept-test.bin`; tablet: "Sent". Content: the stored file was sent back to the tablet by the agent and hashed there — `1d6ba715…0db331`, 1 048 576 bytes, identical (the test shell cannot read `~/Downloads`, which is privacy-protected) |
+| F Reject | **EXECUTED/PASS** | `pliwee-reject-test.bin`, 524 288 bytes; Decline on the Mac; agent: `cancelled`, reason `declined by the user`, no stored path; tablet: "Declined". (The owner's first attempt never left the tablet — no offer reached the agent — and was repeated) |
+| G Mac → Android file | **EXECUTED/PASS** | `pliwee send` (the same `Request::Send` the app's Send File… makes), 786 432 random bytes, SHA-256 `28cefb31…4d88d0a5`; first refused with "peer is not authorized" because `files.v1` was not granted on the Mac — correct (ADR-0008) — and granted with `pliwee grant`, the request the app's switch makes; tablet prompt "Incoming file … from MacBook Pro de Yuri", Accept (tapped through `adb` on the real UI); stored `/sdcard/Download/Pliwee/pliwee-mac-to-android.bin`, same size and same SHA-256 |
+| H Clipboard Android → Mac | **EXECUTED/PASS** | `pliwee-android-to-mac-7319` copied on the tablet, Send clipboard in the app (its confirmation screen showed the text, 26 bytes); agent `outcome="applied"`; `pbpaste` on the Mac returned exactly that text, 26 bytes |
+| I Clipboard Mac → Android | **EXECUTED/PASS** | `pliwee-mac-to-android-4826` put on the Mac's pasteboard and sent by hand; pasted with the system Paste key into a text field on the tablet, which then read exactly that text. Automatic sending stays out of scope (PLAT-DEC-009) |
+| J Restart service | **EXECUTED/PASS** | The app shows **Restart Service** only when the service is on and not responding, so with a healthy service the owner turned *Run Pliwee in the background* off and on — the same unregister/register. Agent pid 32635 → 37779; identity unchanged (`8d0cc84f…`, `9D39 5366 85A4 8134`); the SM-X620 still paired with its grants; session re-established 16 s after start, same peer, no pairing |
+| K Restart app | **EXECUTED/PASS** | Quit from the menu bar at 11:34:29: the agent stayed at pid 37779, the tablet stayed connected. Reopened: the app showed Connected and the SM-X620 (owner); `pliwee ping` → pong in 71 ms. The reopened instance was the debug copy of the bundle — which mattered, see §11.3 |
+| L Menu bar | **HUMAN-OBSERVED** | Confirmed by the owner: the icon is visible; clicking opens the menu; it shows Connected and the SM-X620; Open Pliwee opens the window; Settings… opens Settings; Quit Pliwee quits |
+| M Reboot | **EXECUTED/FAIL** — the service did not start at login | Real reboot (`kern.boottime` 17 Sep 20:19 → 3 Oct 12:03:33). launchd: `last exit code = 78: EX_CONFIG`, `spawn failed`, 28 runs. Cause in §11.3. After one re-registration: identity identical to the pre-reboot record, keychain item present, `state.json` untouched since 03:29 (no regeneration), the SM-X620 still paired and trusted, reconnected at 12:21:19 without pairing, and a clip sent from the Mac (`pliwee-after-reboot-5150`) was pasted on the tablet |
+
+### 11.2 Identity across restart and reboot
+
+| | Before reboot (12:00) | After reboot (12:19) |
+| --- | --- | --- |
+| device id | `8d0cc84faf9c084c3ed410c3ddcc4b7b` | `8d0cc84faf9c084c3ed410c3ddcc4b7b` |
+| fingerprint | `9D39 5366 85A4 8134` | `9D39 5366 85A4 8134` |
+| keychain item | present | present |
+| `state.json` modified | 03:29:17 | 03:29:17 |
+| peer | SM-X620 `0ABF FA76 C715 32D0`, paired, 3 grants | the same |
+
+### 11.3 Findings
+
+1. **A second copy of the app captured the registered service — DEFECT, fixed
+   (`ba667b4`).** Two copies of Pliwee 1.1.0 were on disk: the release
+   bundle that registered the agent, and a debug bundle from validation.
+   Launchpad and Spotlight list both; the owner opening one while the other
+   ran started a **second instance** (also reported by the owner: "opens
+   twice"). The second instance's status queries re-bound the agent's
+   Background Task Management record to *its* path: after the reboot
+   `xpcproxy` logged `Resolved (io.github.yurisismotto.pliwee, 1.1.0,
+   Contents/MacOS/pliweed, 7F93D5B3…) to program: …/macos/build/debug/Pliwee.app/
+   Contents/MacOS/pliweed`. That binary did not satisfy the launch constraint
+   recorded at registration (ad hoc pins the cdhash), hence `EX_CONFIG`.
+   Removing the debug copy did **not** let launchd fall back to the remaining
+   copy — it then logged `Could not find and/or execute program` — so the
+   binding is persistent, not resolved per launch. Recovery was the app's own
+   Restart Service. Fix: one instance per session — a newcomer asks the running
+   instance to show its window and quits before touching the agent or
+   ServiceManagement. Verified: a copy of the rebuilt bundle opened beside the
+   running app exited, one instance remained, and Background Task Management
+   logged no lookup for the copy. Not verified: a second reboot after the fix.
+   A Developer ID signature would also make any copy's `pliweed` satisfy the
+   constraint (team + identifier rather than cdhash).
+2. **`pliwee clipboard status` said manual send was unsupported on macOS —
+   DEFECT, fixed (`42245c5`).** It derived "manual send" from the watch flag,
+   the Linux rule from finding F-2. On macOS the watch is absent by policy and
+   reading works; the agent was sending clips by hand while the CLI said it
+   could not. Each adapter now declares `MANUAL_SEND_NEEDS_WATCH`; Linux output
+   is unchanged (pinned by a test). Verified against the running agent.
+3. **A multi-homed Mac reduces Android to one address — finding, not fixed.**
+   With `en0` and `en5` in the same /22, the QR payload's addresses and the
+   Android resolver both converged on `en5`'s 192.168.68.69 (`endpoints=1` for
+   30 rounds). When the tablet's path to that address failed with
+   `EHOSTUNREACH` for ~50 minutes, the Wi-Fi address that would have answered
+   was never tried. The code involved — the QR's address selection, the mDNS
+   responder, the Android resolver — is shared with Linux, and a redesign of
+   discovery is out of scope for this round. Recorded for a discovery
+   follow-up.
+4. **Restart Service is hidden while the service is healthy.** By design (it
+   is the remedy for a non-responding service); the restart gate used the
+   on/off switch, which is the same operation. Not a defect.
+5. **Rebuilding the bundle in place changes the registered agent.** Again
+   measured in this round: the CLI fix touched `pliwee-macos`, which is linked
+   into `pliweed`; the rebuilt agent (`04447ce6…`) no longer matches the
+   running one (`a01f92e5…`), so the next start needs Restart Service and a
+   keychain *Always Allow*. The known ad-hoc limitation (§5.5, §5.6).
+
+### 11.4 Automated gates after the fixes
+
+| Gate | Result |
+| --- | --- |
+| `cargo fmt --all --check` | **EXECUTED/PASS** |
+| `cargo clippy --workspace --exclude pliwee-gui --all-targets --all-features -- -D warnings`, macOS and `x86_64-unknown-linux-gnu` | **EXECUTED/PASS** |
+| `cargo test --workspace --exclude pliwee-gui --exclude pliwee-linux` | **EXECUTED/PASS — 882 passed, 0 failed, 26 ignored** (+3 CLI tests) |
+| `cargo test -p pliwee-linux --lib` | **EXECUTED/PASS — 42 passed** |
+| `macos/scripts/test.sh` | **EXECUTED/PASS — 48 tests in 9 suites** (+4 single-instance tests) |
+| `macos/scripts/build-app.sh` | **EXECUTED/PASS** |
+
+### 11.5 Closure table, updated
+
+| Item | Result |
+| --- | --- |
+| Android physical discovery | EXECUTED/PASS (with the caveat in §11.1 A) |
+| Pairing | EXECUTED/PASS |
+| TLS / pinning | EXECUTED/PASS |
+| Reconnect | EXECUTED/PASS |
+| Android → Mac file | EXECUTED/PASS (content hash verified) |
+| Reject file | EXECUTED/PASS |
+| Mac → Android file | EXECUTED/PASS (content hash verified) |
+| Clipboard Android → Mac | EXECUTED/PASS |
+| Clipboard Mac → Android | EXECUTED/PASS |
+| Restart service | EXECUTED/PASS |
+| Restart app | EXECUTED/PASS |
+| Menu bar manual observation | HUMAN-OBSERVED |
+| Reboot | **EXECUTED/FAIL** (service start at login); persistence and recovery PASS; fix landed, second reboot NOT EXECUTED |
+| Fedora regression | NOT EXECUTED — requires a Fedora/Linux host (§10.5) |
+| ADR-0021 | Proposed (unchanged) |
+
+### 11.6 Verdict
+
+**MACOS DESKTOP V1: CONDITIONALLY ACCEPTED.**
+
+Every device gate ran on a physical Android and passed, except the reboot,
+which failed for a reason now understood and fixed. Not CERTIFIED: the
+Fedora regression is NOT EXECUTED, and the reboot gate needs one more real
+reboot with a single copy of the app to show the service starting at login
+after `ba667b4`. ADR-0021's recommendation from §10.7 stands: keep it
+*Proposed* until the Fedora regression has run.
