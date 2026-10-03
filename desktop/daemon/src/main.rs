@@ -398,7 +398,7 @@ async fn main() -> anyhow::Result<()> {
     // `ControlTransport` seam. A failure to bind because another agent
     // already owns the endpoint is fatal and is *not* worked around by
     // choosing a different name — see `pliwee_control::transport`.
-    let transport = pliwee_linux::UnixControlTransport::default_endpoint();
+    let transport = pliwee_linux::default_control_transport();
     let control_listener = match ControlTransport::bind(&transport) {
         Ok(l) => l,
         Err(e @ pliwee_control::transport::BindError::AlreadyOwned { .. }) => {

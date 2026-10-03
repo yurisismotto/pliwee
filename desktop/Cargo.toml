@@ -5,6 +5,7 @@ members = [
     "core",
     "control",
     "runtime",
+    "platform-unix",
     "platform-linux",
     "daemon",
     "cli",

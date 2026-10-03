@@ -1524,6 +1524,7 @@ dependencies = [
  "pliwee-control",
  "pliwee-core",
  "pliwee-proto",
+ "pliwee-unix",
  "sha2",
  "tempfile",
  "tokio",
@@ -1562,6 +1563,16 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
+]
+
+[[package]]
+name = "pliwee-unix"
+version = "1.1.0"
+dependencies = [
+ "async-trait",
+ "pliwee-control",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

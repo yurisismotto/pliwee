@@ -1,0 +1,28 @@
+[package]
+name = "pliwee-unix"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints.rust]
+# An adapter crate, so `unsafe` is `deny` rather than `forbid`, the same rule
+# as `pliwee-linux` and `pliwee-macos`: any `unsafe` here would need a
+# deliberate, reviewable `#[allow(unsafe_code)]` with a justification comment.
+#
+# There is none, and there is no reason for one: everything in this crate is
+# `std` and `tokio`.
+unsafe_code = "deny"
+
+[lints.clippy]
+todo = "warn"
+unwrap_used = "warn"
+
+[dependencies]
+pliwee-control = { version = "1.0.0", path = "../control" }
+async-trait = "0.1"
+tokio = { version = "1", features = ["net", "io-util", "rt"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }

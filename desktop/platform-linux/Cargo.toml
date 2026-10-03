@@ -49,6 +49,9 @@ desktop-activation = ["dep:zbus", "tray"]
 [dependencies]
 pliwee-core = { version = "1.0.0", path = "../core", features = ["unix-fs"] }
 pliwee-control = { version = "1.0.0", path = "../control" }
+# The Unix-domain control socket, shared with the macOS adapter. Re-exported
+# from this crate's root, so its callers did not change when it moved.
+pliwee-unix = { version = "1.0.0", path = "../platform-unix" }
 pliwee-proto = { version = "1.0.0", path = "../proto" }
 async-trait = "0.1"
 # `MIGRATED_FROM` records the SHA-256 of each file carried over from an

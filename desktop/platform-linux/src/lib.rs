@@ -51,9 +51,6 @@
 
 use std::path::{Path, PathBuf};
 
-use pliwee_control::transport::{BindError, ControlListener, ControlTransport};
-use tokio::net::{UnixListener, UnixStream};
-
 pub mod legacy_migration;
 pub use legacy_migration::{
     migrate_config_file, migrate_data_dir, ConfigFiles, ConfigOrigin, DataDirOrigin, DataDirs,
@@ -129,201 +126,32 @@ fn nix_uid() -> u32 {
         .unwrap_or(0)
 }
 
-/// The Unix-domain-socket control transport.
-#[derive(Debug, Clone)]
-pub struct UnixControlTransport {
-    path: PathBuf,
-}
-
-impl UnixControlTransport {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
-    }
-
-    /// The default location for this session.
-    pub fn default_endpoint() -> Self {
-        Self::new(control_socket_path())
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Releases the endpoint without holding the listener.
-    ///
-    /// The agent hands its listener to a task and then wants to unbind on
-    /// shutdown, which is a different lifetime from the listener's. Naming it
-    /// here rather than calling `remove_file` in `main` keeps "unbind the
-    /// control endpoint" a concept the adapter owns — a named pipe has no
-    /// file to unlink, and the binary should not have to know that.
-    pub fn release(&self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-impl ControlTransport for UnixControlTransport {
-    type Listener = UnixControlListener;
-
-    fn bind(&self) -> Result<Self::Listener, BindError> {
-        bind(&self.path)
-    }
-
-    fn endpoint(&self) -> String {
-        self.path.display().to_string()
-    }
-}
-
-/// A bound control socket.
-#[derive(Debug)]
-pub struct UnixControlListener {
-    inner: UnixListener,
-    path: PathBuf,
-}
-
-#[async_trait::async_trait]
-impl ControlListener for UnixControlListener {
-    type Stream = UnixStream;
-
-    async fn accept(&self) -> std::io::Result<Self::Stream> {
-        let (stream, _) = self.inner.accept().await?;
-        Ok(stream)
-    }
-
-    fn describe(&self) -> String {
-        self.path.display().to_string()
-    }
-
-    fn release(&self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-/// Binds the control socket, replacing a stale one left by a crash.
+/// The Unix-domain-socket control transport, from `pliwee-unix`.
 ///
-/// # Live owner versus stale file
+/// It lived here until the macOS adapter needed the same code: nothing in it
+/// is Linux-specific, and a second copy of the live-owner rule in `bind`
+/// would be a second place for that rule to be wrong. Re-exported so every
+/// existing `pliwee_linux::bind`, `pliwee_linux::connect` and
+/// `pliwee_linux::UnixControlTransport` keeps meaning what it meant.
+pub use pliwee_unix::{bind, connect, UnixControlListener, UnixControlTransport};
+
+/// The control transport at this session's default location,
+/// [`control_socket_path`].
 ///
-/// A leftover socket file from an unclean shutdown must be removed, or `bind`
-/// fails for ever. A socket file with a *live* daemon behind it must not be,
-/// because removing it would silently steal the endpoint from a running
-/// agent. The two are told apart by connecting: a stale socket refuses with
-/// `ECONNREFUSED`, a live one accepts.
-///
-/// The pre-Wave-0 code removed unconditionally. That was defensible when only
-/// one implementation existed and the reasoning was "a second live daemon
-/// would have failed its own port bind first" — but the port bind happens
-/// *after* this one in `main`, and on Windows the equivalent mistake is a
-/// named-pipe squat. The distinguishable [`BindError::AlreadyOwned`] is what
-/// a named-pipe implementation needs, so Linux establishes the semantics now.
-pub fn bind(path: &Path) -> Result<UnixControlListener, BindError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-        harden(parent, 0o700)?;
-    }
-
-    match path.try_exists() {
-        Ok(true) => {
-            if socket_has_live_owner(path) {
-                return Err(BindError::AlreadyOwned {
-                    detail: format!("{} is accepting connections", path.display()),
-                });
-            }
-            // Stale. Safe to remove: only this user can reach the directory.
-            std::fs::remove_file(path)?;
-        }
-        Ok(false) => {}
-        // A metadata error is not absence. Refusing here is the same rule the
-        // identity store follows: never act on "probably not there".
-        Err(e) => {
-            return Err(BindError::Io(std::io::Error::new(
-                e.kind(),
-                format!("{} could not be examined: {e}", path.display()),
-            )))
-        }
-    }
-
-    let listener = UnixListener::bind(path)?;
-    harden(path, 0o600)?;
-    Ok(UnixControlListener {
-        inner: listener,
-        path: path.to_path_buf(),
-    })
+/// A free function rather than the `UnixControlTransport::default_endpoint()`
+/// it replaces, because the transport type now belongs to `pliwee-unix`,
+/// which knows how to bind a socket and deliberately not where this platform
+/// keeps one.
+pub fn default_control_transport() -> UnixControlTransport {
+    UnixControlTransport::new(control_socket_path())
 }
 
-/// Whether something is listening on this socket right now.
-fn socket_has_live_owner(path: &Path) -> bool {
-    // A blocking connect on a Unix socket to a local path either succeeds
-    // immediately or fails immediately; there is no network round trip to
-    // wait for, so this cannot hang the way a TCP probe could.
-    std::os::unix::net::UnixStream::connect(path).is_ok()
-}
-
-fn harden(path: &Path, mode: u32) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-}
-
-/// Connects to the agent's control endpoint.
-///
-/// The client half, so that `pliwee-cli` and `pliwee-gui` reach the agent
-/// through this crate rather than through the agent's own crate.
-pub async fn connect(path: &Path) -> std::io::Result<UnixStream> {
-    UnixStream::connect(path).await
-}
+/// What to tell a person whose client cannot reach the agent.
+pub const START_HINT: &str = "Start it with: systemctl --user start pliweed.service";
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn binding_twice_reports_already_owned_and_not_a_generic_io_error() {
-        // The property a Windows named-pipe implementation depends on: a name
-        // that is already owned must be distinguishable, so the agent can
-        // abort instead of quietly choosing another name.
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("control.sock");
-
-        let _first = bind(&path).expect("first bind");
-        match bind(&path) {
-            Err(BindError::AlreadyOwned { .. }) => {}
-            other => panic!("expected AlreadyOwned, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn a_stale_socket_file_is_replaced_rather_than_refused() {
-        // The ordinary case after an unclean shutdown: a socket file with
-        // nothing behind it. Refusing here would leave the agent unable to
-        // start until someone deleted a file by hand.
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("control.sock");
-
-        {
-            let _listener = bind(&path).expect("first bind");
-        } // dropped: the file remains, the listener does not
-
-        assert!(path.exists(), "the socket file must survive the drop");
-        let _second = bind(&path).expect("a stale socket must be replaced");
-    }
-
-    #[tokio::test]
-    async fn a_bound_socket_is_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("control.sock");
-        let _listener = bind(&path).expect("bind");
-        let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
-        assert_eq!(mode & 0o077, 0, "mode {mode:o}");
-    }
-
-    #[tokio::test]
-    async fn release_removes_the_endpoint() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("control.sock");
-        let listener = bind(&path).expect("bind");
-        assert!(path.exists());
-        listener.release();
-        assert!(!path.exists());
-    }
 
     #[test]
     fn the_control_socket_path_follows_the_runtime_directory() {
