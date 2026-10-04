@@ -43,7 +43,7 @@ belongs beside its siblings.
 
 ```
 docs/
-├── adr/                        20 decisions, ADR-0001 … ADR-0020 — see adr/README.md
+├── adr/                        21 decisions, ADR-0001 … ADR-0021 — see adr/README.md
 ├── architecture/               how the system works now: OVERVIEW, PROTOCOL, CLIPBOARD, FILES, NOTIFICATIONS
 ├── design/                     BRAND, UI-GUIDELINES, PLAY-STORE-LISTING, tokens.json, assets/ (the build reads the app icon here),
 │                               references/ (owner-supplied boards; never read by a build)
