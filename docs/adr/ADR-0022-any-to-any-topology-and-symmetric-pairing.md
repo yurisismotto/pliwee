@@ -657,11 +657,13 @@ until then (§D5).
   flow, unchanged. A V1 app can neither issue nor accept a text code: it has
   no path for entering one. A V1 device therefore pairs only by QR, and only
   as the joiner (phone) or issuer (desktop) it already is.
-  **Open, for the owner (recorded 2026-10-04, #41):** a V1 joiner has no
-  joiner-side confirmation, and a V1 issuer cannot show a comparison code. How
-  mandatory human confirmation (owner question 3) applies when one side of a
-  pairing is a V1 device is not settled by the acceptance decision, and this
-  bullet is not to be read as settling it.
+  **V1 compatibility exception:** when either peer negotiated protocol version
+  1, pairing remains QR-only and uses ADR-0006's existing human-confirmation
+  semantics: the issuer performs the mandatory local confirmation before trust
+  is created. A V1 joiner has no comparison-code confirmation UI. When both
+  peers negotiate protocol version 2, confirmation on both devices is
+  mandatory. This exception preserves V1 compatibility and creates no new trust
+  path beyond ADR-0006.
 * **Stored state.** The trust store gains per-peer address hints and dial
   bookkeeping. Neither is trust, and its migration is an implementation detail
   for the SPEC.
@@ -755,8 +757,11 @@ answer is applied in the section it concerns.
    constants, not security invariants, and a future SPEC may tune them from
    testing without changing this decision.
 3. **Human confirmation** (§D5). Mandatory in both pairing modes, QR and text
-   code. A pairing must not become trusted until the required local human
-   confirmation succeeds.
+   code. When both peers negotiate protocol version 2, confirmation on both
+   devices is mandatory. When either peer is V1, the QR-only compatibility
+   flow retains ADR-0006's issuer-side mandatory confirmation. A pairing must
+   not become trusted until the confirmation required for its negotiated
+   protocol version succeeds.
 4. **Comparison code** (§D5). At least 64 bits of comparison entropy, rendered
    as six words from a fixed 2048-word list (66 bits). The exact word list and
    rendering belong to the SPEC.
