@@ -2,6 +2,8 @@
 
 **Status:** Accepted · 2026-08-29
 
+> **Amending note — 2026-10-04, owner acceptance of [ADR-0022](ADR-0022-any-to-any-topology-and-symmetric-pairing.md) ([#41](https://github.com/yurisismotto/pliwee/issues/41), branch `feature/issue-41-worker`), §D2–§D3.** The same `connectedDevice` foreground service also hosts a TLS listener that accepts trusted peers, and the phone may connect to several trusted peers rather than one computer; backoff applies per peer, with jitter, and the service stops when no trusted peer is left to dial and no pairing window is open. The service type, its qualifying permission, no boot receiver, `START_NOT_STICKY`, no wakelocks and the capped backoff are unchanged. Accepted is not implemented: until ADR-0022 lands, the tree still behaves as described below. The original text below is left as it was decided.
+
 ## Context
 
 The phone must maintain a connection to the computer while the user wants one,

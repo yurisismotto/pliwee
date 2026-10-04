@@ -4,6 +4,8 @@
 
 > **Superseding note — 2026-09-24, Pliwee rebrand Wave 5 (branch `feature/pliwee-rebrand-wave5`), [ADR-0020](ADR-0020-rename-to-pliwee.md) §D4.** The canonical data stream is `pliwee-data/1` with the domain `pliwee/files.v1/data-stream/v1`. `omnibridge-data/1` and `omnibridge/files.v1/data-stream/v1` below are the legacy profile's values, and a data stream must negotiate the same profile as the control session that issued its challenge. The original text below is left as it was decided.
 
+> **Amending note — 2026-10-04, owner acceptance of [ADR-0022](ADR-0022-any-to-any-topology-and-symmetric-pairing.md) ([#41](https://github.com/yurisismotto/pliwee/issues/41), branch `feature/issue-41-worker`), §D3.** [§The phone always dials](#the-phone-always-dials) is amended to *the control session's dialer dials*: the device that dialled the control session dials that session's data streams, and its listener accepts them. Every other rule below is unchanged — the challenge is issued on the control session, the data stream presents the same pinned identity and negotiates the same profile, and the MAC binds acceptor, dialer and transfer. Accepted is not implemented: until ADR-0022 lands, the tree still behaves as described below. The original text below is left as it was decided.
+
 ## Context
 
 [ADR-0012](ADR-0012-bulk-transfer-and-frame-limit.md) decided that bulk

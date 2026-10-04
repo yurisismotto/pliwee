@@ -4,6 +4,8 @@
 
 > **Superseding note — 2026-09-24, Pliwee rebrand Wave 5 (branch `feature/pliwee-rebrand-wave5`), [ADR-0020](ADR-0020-rename-to-pliwee.md) §D4.** The daemon now advertises one instance under **both** `_pliwee._tcp.local.` (canonical) and `_omnibridge._tcp.local.` (legacy profile), and the app browses both and shows one device per TXT `id`. `_omnibridge._tcp.local.` below is the legacy value. The original text below is left as it was decided.
 
+> **Superseding note — 2026-10-04, owner acceptance of [ADR-0022](ADR-0022-any-to-any-topology-and-symmetric-pairing.md) ([#41](https://github.com/yurisismotto/pliwee/issues/41), branch `feature/issue-41-worker`), §D1–§D3.** The fixed direction below — *the desktop advertises; the phone browses and always initiates the connection* — is superseded: every device advertises while its listener is accepting (subject to `--no-mdns` and the per-network control) and dials a trusted peer when it has a reason to. On Android, advertising is allowed automatically only on the network where the device successfully completed an explicit pairing, and is otherwise off until the user explicitly enables it — a trusted session alone never enables it; the per-network control is a prerequisite, not a roadmap item. DNS-SD, the service types, the TXT keys, and "discovery is not trust" are kept. Accepted is not implemented: until ADR-0022 lands, the tree still behaves as described below. The original text below is left as it was decided.
+
 ## Context
 
 The phone must find the desktop on a home or office network where addresses
