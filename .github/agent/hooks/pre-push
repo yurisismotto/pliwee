@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# pre-push — installed only in the issue worker's checkout
+# (git config core.hooksPath .github/agent/hooks). Refuses anything but a
+# fast-forward of the worker's own feature/issue-N-<slug> branch, and any commit
+# on it that is not the owner's or carries AI attribution.
+# PLIWEE_AGENT_BASE is the branch the work started from (default origin/main).
+set -uo pipefail
+guard="$(git rev-parse --show-toplevel)/.github/agent/agent-guard.sh"
+"$guard" identity >/dev/null || exit 1
+"$guard" push || exit 1
+"$guard" commits "${PLIWEE_AGENT_BASE:-origin/main}"

@@ -1,0 +1,5 @@
+# actionlint configuration. The one custom label is the issue worker's
+# self-hosted runner (docs/development/AGENT-WORKFLOW.md § Self-hosted runner plan).
+self-hosted-runner:
+  labels:
+    - pliwee-agent

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# commit-msg — installed only in the issue worker's checkout
+# (git config core.hooksPath .github/agent/hooks). Refuses a commit whose
+# identity is not the owner's or whose message carries AI attribution.
+# AGENTS.md § Git Authorship Policy.
+set -uo pipefail
+guard="$(git rev-parse --show-toplevel)/.github/agent/agent-guard.sh"
+"$guard" identity >/dev/null && "$guard" message "$1"
