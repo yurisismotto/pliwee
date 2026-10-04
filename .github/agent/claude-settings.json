@@ -1,5 +1,5 @@
 {
-  "$comment": "Permissions for the headless issue worker only (claude -p --settings .github/agent/claude-settings.json). Not loaded by interactive sessions. In -p mode a command matching no allow rule is refused, so the allow list is the boundary and the deny list documents intent. Neither is a security boundary on its own: prefix rules can be sidestepped, which is why the git hooks, the token's scopes and the post-run verification exist. Path rules use Edit(...), which covers every file-editing tool including Write. See docs/development/AGENT-WORKFLOW.md § Security model.",
+  "$comment": "Permissions for the headless issue worker only (claude -p --settings .github/agent/claude-settings.json). Not loaded by interactive sessions. In -p mode a command matching no allow rule is refused, so the allow list is the boundary and the deny list documents intent. Neither is a security boundary on its own: prefix rules can be sidestepped, which is why the git hooks, the token's scopes and the post-run verification exist. Path rules use Edit(...), which covers every file-editing tool including Write. See docs/development/AGENT-WORKFLOW.md \u00a7 Security model.",
   "permissions": {
     "defaultMode": "acceptEdits",
     "allow": [
@@ -16,12 +16,9 @@
       "Bash(git log:*)",
       "Bash(git show:*)",
       "Bash(git branch --show-current:*)",
-      "Bash(git switch -c feature/issue-:*)",
       "Bash(git add:*)",
       "Bash(git commit -m:*)",
       "Bash(git commit -F:*)",
-      "Bash(git push -u origin feature/issue-:*)",
-      "Bash(git push origin feature/issue-:*)",
       "Bash(git fetch origin:*)",
       "Bash(git rev-parse:*)",
       "Bash(git ls-files:*)",
@@ -41,9 +38,7 @@
       "Bash(gh issue list:*)",
       "Bash(gh issue comment:*)",
       "Bash(gh issue edit:*)",
-      "Bash(gh pr create --draft:*)",
       "Bash(gh pr view:*)",
-      "Bash(gh pr edit:*)",
       "Bash(gh pr checks:*)",
       "Bash(gh run view:*)",
       "Bash(gh run list:*)"
@@ -86,7 +81,12 @@
       "Edit(AGENTS.md)",
       "Edit(docs/audits/**)",
       "Edit(docs/certification/**)",
-      "Edit(docs/reports/**)"
+      "Edit(docs/reports/**)",
+      "Bash(git switch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr edit:*)"
     ]
   }
 }
