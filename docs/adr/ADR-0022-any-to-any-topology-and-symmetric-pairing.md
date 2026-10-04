@@ -1,14 +1,22 @@
 # ADR-0022 — Any-to-any topology and symmetric pairing
 
-**Status:** Proposed · 2026-10-04
+**Status:** Accepted · 2026-10-04
 
-Not accepted. Nothing in this ADR may be implemented until the project owner
-accepts it; until then [ADR-0005](ADR-0005-lan-discovery-mdns.md),
+Proposed 2026-10-04 ([#39](https://github.com/yurisismotto/pliwee/issues/39)).
+Accepted by the project owner, Yuri C. Sismotto, on 2026-10-04
+([#41](https://github.com/yurisismotto/pliwee/issues/41)). The owner's answers
+to the four open questions are recorded in
+[§Owner decisions at acceptance](#owner-decisions-at-acceptance) and applied in
+the sections they concern.
+
+Accepted is not implemented. The tree still implements the V1 topology of
+[ADR-0005](ADR-0005-lan-discovery-mdns.md),
 [ADR-0006](ADR-0006-device-identity-and-pairing.md) and
-[ADR-0013](ADR-0013-file-transfer-data-stream.md) describe what the tree does
-and must do.
+[ADR-0013](ADR-0013-file-transfer-data-stream.md) until the implementation
+lands, and that implementation needs a SPEC that does not exist yet
+([§Notes](#notes)).
 
-**Relationship to earlier ADRs, once accepted.**
+**Relationship to earlier ADRs.**
 
 * **Supersedes** [ADR-0005](ADR-0005-lan-discovery-mdns.md)'s fixed direction
   — *"The desktop advertises; the phone browses and always initiates the
@@ -36,9 +44,9 @@ and must do.
   [ADR-0020](ADR-0020-rename-to-pliwee.md) unchanged. Trust stays pairwise;
   whether it ever becomes transitive is #6's decision, not this one.
 
-The text of every earlier ADR is left as it was decided. When this ADR is
-accepted, each superseded or amended ADR gets a dated superseding note, the
-same way ADR-0020 was recorded.
+The text of every earlier ADR is left as it was decided. Each superseded or
+amended ADR carries a superseding or amending note dated 2026-10-04, the same
+way ADR-0020 was recorded.
 
 ---
 
@@ -167,10 +175,15 @@ desktop. The per-network advertising control that ADR-0005 and T18 put on the
 roadmap is therefore a **prerequisite** for advertising from Android, not a
 follow-up:
 
-* Android advertises only on networks where the user has allowed it. Proposed
-  default: allowed on a network where this device completed a pairing or held
-  a trusted session, and off everywhere else. Whether that default is right is
-  an open question for the owner (§Open questions).
+* Android advertises only on networks where it is allowed. Decided at
+  acceptance (owner question 1):
+  * advertising may be allowed automatically on the network where this device
+    **successfully completed an explicit pairing**;
+  * on every other network, advertising is **off until the user explicitly
+    enables it**;
+  * merely establishing a trusted session on a network **must not**
+    automatically enable advertising there;
+  * discovery remains non-authoritative and never grants trust (ADR-0005).
 * While it is not advertising, the device still listens and dials. Trusted
   peers can still reach it at a remembered address (§D3). Not advertising
   reduces how easily the device can be found. It never removes access for
@@ -219,6 +232,10 @@ lexicographically:
   may not be listening at all, and waiting would only delay the one dial that
   can work.
 
+The 1.5–3 s delay is an initial SPEC default accepted by the owner (owner
+question 2): an operational constant, not a security invariant, which a future
+SPEC may tune from testing without changing this decision.
+
 Both devices know both fingerprints after pairing, so they compute the same
 order without exchanging anything. The order carries no authority: it
 schedules dials and settles duplicates (§D4). Nothing else may depend on it.
@@ -258,7 +275,7 @@ The rule:
 
 1. **Probe the older session.** Send a `PING` on the session that was
    established first, as this device saw it, and wait up to a bounded timeout
-   (proposed 3 s).
+   (3 s, the initial SPEC default accepted by the owner).
 2. **If it does not answer, it is stale.** Close it and keep the new one.
    This handles the common case in which the peer lost the old connection
    (sleep, network change, reboot) and dialled again, while this side still
@@ -319,8 +336,10 @@ a pinned identity can open an authenticated session at all. A trusted peer
 that keeps opening sessions to make this side drop its existing one is A6,
 and it can only disrupt its own pairing. Bound it anyway: more than 5
 supersessions for one peer within 60 s refuses that peer's new sessions for
-60 s and logs the event with the short fingerprint only (T11). The limits are
-proposed values, to be fixed in the SPEC.
+60 s and logs the event with the short fingerprint only (T11). These limits,
+and the 3 s probe above, are initial SPEC defaults accepted by the owner (owner
+question 2): operational constants, not security invariants, which a future
+SPEC may tune from testing without changing this decision.
 
 ### D5 — Symmetric pairing: issuer and joiner
 
@@ -417,7 +436,8 @@ and it is bounded:
   `PAIR_REQUEST` is sent**. The joiner knows both fingerprints as soon as the
   TLS handshake ends, so it can show the comparison code then. A decline sends
   nothing, which leaves the issuer with nothing to retract. In QR mode the
-  code is shown at the same point and confirmation is recommended.
+  code is shown at the same point and the joiner's confirmation is **equally
+  mandatory** (owner question 3, below).
 * **The text code is a secret on screen and must be handled as one.** This is
   T7 in a new form: a code that can be typed can also be read over a
   shoulder. Rules:
@@ -438,9 +458,17 @@ fingerprints in a fixed order:
 len32(initiator_fp) ‖ initiator_fp)`. The full fingerprint stays available on
 request.
 
-**The comparison code carries at least 64 bits**, proposed as six words from a
-fixed 2048-word list (66 bits). It is the last defence against an attacker
-**who already holds the token** (ADR-0006, T7), and a text code makes that
+**Human confirmation is mandatory in both pairing modes**, QR and text code
+(owner question 3). A pairing must not become trusted until the required local
+human confirmation succeeds: on the issuer, the prompt that sits between
+consuming the token and answering `PAIR_STATUS_ACCEPTED`, as in ADR-0006; on
+the joiner, the comparison before `PAIR_REQUEST` is sent. A QR code pins the
+issuer before connecting, but it does not replace either confirmation.
+
+**The comparison code carries at least 64 bits**, rendered as six words from a
+fixed 2048-word list (66 bits), as accepted by the owner (owner question 4).
+The exact word list and its rendering belong to the SPEC. It is the last
+defence against an attacker **who already holds the token** (ADR-0006, T7), and a text code makes that
 attacker more likely. Such an attacker sits in the middle, fixes the key it
 shows the joiner, learns the joiner's fingerprint from TLS, and then generates
 keys for its own connection to the issuer until the two screens agree. Against
@@ -629,6 +657,13 @@ until then (§D5).
   flow, unchanged. A V1 app can neither issue nor accept a text code: it has
   no path for entering one. A V1 device therefore pairs only by QR, and only
   as the joiner (phone) or issuer (desktop) it already is.
+  **V1 compatibility exception:** when either peer negotiated protocol version
+  1, pairing remains QR-only and uses ADR-0006's existing human-confirmation
+  semantics: the issuer performs the mandatory local confirmation before trust
+  is created. A V1 joiner has no comparison-code confirmation UI. When both
+  peers negotiate protocol version 2, confirmation on both devices is
+  mandatory. This exception preserves V1 compatibility and creates no new trust
+  path beyond ADR-0006.
 * **Stored state.** The trust store gains per-peer address hints and dial
   bookkeeping. Neither is trust, and its migration is an implementation detail
   for the SPEC.
@@ -702,22 +737,34 @@ until then (§D5).
   fingerprints, the outcome and addresses (public values, T11). The text code,
   the token, and `HELLO` contents beyond the sanitized name are never logged.
 
-## Open questions for the owner
+## Owner decisions at acceptance
 
-These do not block accepting the decision. They are values and defaults this
-ADR proposes and the owner may change at acceptance:
+Decided by the project owner, Yuri C. Sismotto, on 2026-10-04
+([#41](https://github.com/yurisismotto/pliwee/issues/41)). These were the
+values and defaults the proposal left for the owner to set at acceptance. Each
+answer is applied in the section it concerns.
 
-1. The default for Android advertising per network (§D2): *allowed on networks
-   where this device paired or held a trusted session* versus *off until
-   enabled per network*.
-2. The proposed constants: the preferred-dialer delay of 1.5–3 s, the
-   stale-session probe of 3 s, and the churn bound of 5 supersessions in 60 s.
-   The SPEC fixes them.
-3. Whether the joiner's human confirmation should be mandatory in QR mode as
-   well, not only in text-code mode.
-4. The rendering of the comparison code. It must carry at least 64 bits
-   (§D5); this ADR proposes six words from a fixed 2048-word list, and the
-   word list itself is for the SPEC.
+1. **Android advertising per network** (§D2). Android may automatically allow
+   advertising on the network where this device successfully completed an
+   explicit pairing. On every other network, advertising is off until the
+   user explicitly enables it. Merely establishing a trusted session on a
+   network must not automatically enable advertising there. Discovery remains
+   non-authoritative and never grants trust.
+2. **Connection constants** (§D3, §D4). The proposed values are accepted as
+   initial SPEC defaults: preferred-dialer delay 1.5–3 s; stale-session probe
+   3 s; churn protection — more than 5 supersessions for one peer within 60 s
+   refuses new sessions from that peer for 60 s. They are operational
+   constants, not security invariants, and a future SPEC may tune them from
+   testing without changing this decision.
+3. **Human confirmation** (§D5). Mandatory in both pairing modes, QR and text
+   code. When both peers negotiate protocol version 2, confirmation on both
+   devices is mandatory. When either peer is V1, the QR-only compatibility
+   flow retains ADR-0006's issuer-side mandatory confirmation. A pairing must
+   not become trusted until the confirmation required for its negotiated
+   protocol version succeeds.
+4. **Comparison code** (§D5). At least 64 bits of comparison entropy, rendered
+   as six words from a fixed 2048-word list (66 bits). The exact word list and
+   rendering belong to the SPEC.
 
 ## Notes
 
@@ -725,5 +772,6 @@ ADR proposes and the owner may change at acceptance:
   and #27. Neither of those is decided here: the dialer/listener rule is stated
   for TCP on a LAN, and the "one session per pair" rule is stated per pair of
   identities, so another transport can be added under it.
-* Implementation needs a SPEC (text-code scheme, close reason, constants,
-  trust-store fields) and acceptance of this ADR. Neither exists today.
+* This ADR was accepted on 2026-10-04 (#41). Implementation still needs a SPEC
+  (text-code scheme, close reason, constants, comparison-code word list and
+  rendering, trust-store fields), which does not exist yet.
