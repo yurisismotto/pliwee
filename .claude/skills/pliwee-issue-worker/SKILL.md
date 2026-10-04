@@ -1,6 +1,6 @@
 ---
 name: pliwee-issue-worker
-description: Implement ONE owner-approved (agent:ready) Pliwee GitHub issue end to end — dependency gate, branch, implementation, tests, self-review, gates, push, draft PR. Never merges. Invoke explicitly with the issue number.
+description: Implement ONE owner-approved (agent:ready) Pliwee GitHub issue on the branch prepared by the trusted workflow — implementation, tests, self-review and local commit only. The workflow validates, pushes and opens the Draft PR.
 argument-hint: <issue-number>
 disable-model-invocation: true
 ---
@@ -31,13 +31,14 @@ authorship are not restated here and are not optional.
    loosened bound, no new `#[ignore]`/`--skip`, no `|| true`, no gate removed
    from CI. If a gate is wrong, that is a finding for the owner, not a fix you
    make silently.
-5. **Git:** one branch `feature/issue-$ARGUMENTS-<slug>` from `origin/main`. Never
-   set or change `user.name`/`user.email`, never `--no-verify`, never amend
-   or force-push, never merge or rebase, never push anything but your branch.
-   Commit messages carry **no** `Co-authored-by`, `Generated-by` or any AI
-   attribution. Never merge a PR, mark it ready, enable auto-merge, request a
-   review, or close the issue. The PR stays a **draft** even when CI is green:
-   promoting it is the owner's decision (owner decision, 2026-10-04 — deferred).
+5. **Git:** the trusted workflow creates the `feature/issue-$ARGUMENTS-*`
+   branch from `origin/main` before you start. Verify that branch, but do not
+   create, switch, rename, push, merge or rebase branches. Never set or change
+   `user.name`/`user.email`, never `--no-verify`, never amend. Commit messages
+   carry no `Co-authored-by`, `Generated-by` or any AI attribution. Do not
+   create or modify pull requests. After the local commit and validation, stop;
+   the trusted workflow validates, pushes and opens the Draft PR.
+
 6. **Evidence or it did not happen.** A test you did not run is `NOT EXECUTED —
    <reason>`, never a pass. A hardware gate on a machine without the hardware
    is `NOT EXECUTED`, never "should pass".
@@ -89,13 +90,18 @@ the wire protocol (`protocol/proto/`), a capability's schema, identity,
 pairing, TLS or permissions, say so explicitly: that raises the review bar in
 §6.
 
-## 4. Implement
+## 4. Implement on the prepared branch
+
+The trusted workflow has already created and checked out the issue branch.
+
+Verify it:
 
 ```bash
-git fetch origin
-git switch -c feature/issue-$ARGUMENTS-<slug> origin/main
+git branch --show-current
 ./.github/agent/agent-guard.sh branch $ARGUMENTS
 ```
+
+Do not run `git switch`, `git checkout`, `git push` or create another branch.
 
 Match the surrounding code: naming, comment density, error style. Rust lives
 in `desktop/`, Kotlin in `android/`, the wire format in `protocol/`.
@@ -135,25 +141,22 @@ For protocol, identity, pairing, TLS, permission or capability changes, run that
 review in a **separate subagent** given only the diff, the issue and the
 relevant ADRs, and act on what it finds. Fix, re-run §5, review again.
 
-## 7. Commit, push, draft PR
+## 7. Commit locally and hand back to the workflow
 
 ```bash
 ./.github/agent/agent-guard.sh identity
-git add <the files you changed>                  # never `git add -A` blindly
-git commit -m "<type(scope): summary>" -m "<why>"   # repo style: see git log
+git add <the files you changed>
+git commit -m "<type(scope): summary>" -m "<why>"
 ./.github/agent/agent-guard.sh commits origin/main
-./.github/agent/agent-guard.sh paths origin/main   # nothing you may not touch
-git push -u origin feature/issue-$ARGUMENTS-<slug>
-gh pr create --draft --base main --title "<summary>" --body-file <file>
+./.github/agent/agent-guard.sh paths origin/main
+git diff --check origin/main...HEAD
 ```
 
-The PR body follows `.claude/skills/pliwee-issue-worker/pr-body.md` exactly.
-It says **"Implements #$ARGUMENTS"** — never "Closes"/"Fixes", which would close
-the issue on merge before the owner has judged it.
+Then stop successfully.
 
-Then stop. Do not run `gh pr ready`, do not add reviewers, do not touch
-auto-merge. The workflow labels the issue `agent:review`; CI runs
-independently; the owner marks the PR ready, or does not, and decides the merge.
+Do not push. Do not create, edit, ready, review or merge a PR.
+The trusted GitHub Actions workflow independently validates the local commit,
+pushes the exact validated HEAD and creates the Draft PR.
 
 ## If you cannot finish
 
