@@ -43,7 +43,7 @@ belongs beside its siblings.
 
 ```
 docs/
-├── adr/                        21 decisions on main; ADR-0021 reserved for macOS preview; latest ADR-0022 — see adr/README.md
+├── adr/                        21 accepted decisions on main; ADR-0021 reserved for macOS preview; ADR-0023 proposed — see adr/README.md
 ├── architecture/               how the system works now: OVERVIEW, PROTOCOL, CLIPBOARD, FILES, NOTIFICATIONS
 ├── design/                     BRAND, UI-GUIDELINES, PLAY-STORE-LISTING, tokens.json, assets/ (the build reads the app icon here),
 │                               references/ (owner-supplied boards; never read by a build)

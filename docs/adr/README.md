@@ -27,3 +27,4 @@ alternatives that were actually considered, and what the decision costs.
 | [0020](ADR-0020-rename-to-pliwee.md) | Rename to Pliwee: identity layers, legacy wire profile, state migration | Accepted · not yet implemented |
 | 0021 | Reserved for macOS desktop integration (`feature/macos-desktop-v1`) | Proposed on macOS branch; not yet on `main` |
 | [0022](ADR-0022-any-to-any-topology-and-symmetric-pairing.md) | Any-to-any topology and symmetric pairing | Accepted (2026-10-04) · supersedes 0005's fixed direction and 0006's pairing roles, amends 0009 and 0013 · not yet implemented; SPEC not yet written |
+| [0023](ADR-0023-pliwee-space-trust-model.md) | Pliwee Space: pairwise trust for the multi-device group | Proposed (2026-10-04) · not accepted |
