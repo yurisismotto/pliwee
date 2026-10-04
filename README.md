@@ -687,6 +687,8 @@ Root Markdown is limited to this file and
 ## Documentation
 
 * [docs/README.md](docs/README.md) — the map of all project documentation
+* [docs/roadmap/ROADMAP.md](docs/roadmap/ROADMAP.md) — where Pliwee is
+  heading: multi-device V2 and beyond, directional and without dates
 * [docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md) — how the
   system fits together, with
   [PROTOCOL](docs/architecture/PROTOCOL.md),
