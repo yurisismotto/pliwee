@@ -24,6 +24,7 @@ its filename looks like.
 | a record of a rename, port or data migration | [`migrations/`](migrations/) | `migrations/MIGRATION-ANYFLOW-TO-OMNIBRIDGE.md` |
 | a public-facing policy the app or a store links to | [`policy/`](policy/) | `policy/PRIVACY-POLICY.md` |
 | how the project is developed: process, CI map, agent workflow, kept current | [`development/`](development/) | `development/TEST-TIERS.md` |
+| the product roadmap: where the project is heading, kept current | [`roadmap/`](roadmap/) | `roadmap/ROADMAP.md` |
 
 The three that are easiest to confuse:
 
@@ -75,7 +76,8 @@ docs/
 │   └── ux/                     UX hardening and debt cleanup
 ├── development/                the development process, kept current: AGENT-WORKFLOW, TEST-TIERS
 ├── migrations/                 AnyFlow → OmniBridge; the OmniBridge 1.0.0 Fedora firewall erratum
-└── policy/                     public policies the app links to: PRIVACY-POLICY (its URL is compiled into the app)
+├── policy/                     public policies the app links to: PRIVACY-POLICY (its URL is compiled into the app)
+└── roadmap/                    ROADMAP — the directional product roadmap; GitHub milestones and issues carry the detail
 ```
 
 A directory holding several related historical documents carries its own
