@@ -356,6 +356,18 @@ Measured on 2026-10-04; each one alone stops the workflow from ever starting:
 None of these is something an agent may do for itself, and none is worked
 around.
 
+### Run 1 — 2026-10-04: BLOCKED
+
+`agent:ready` applied to #34 by the owner's account at 05:11:28Z, with this
+branch at `527a5c7` and `main` at `b17e525`. Observed for three minutes: **no
+workflow run** (`gh run list --event issues`: 0), and *Agent · issue worker*
+absent from `actions/workflows` — precondition 1. The mechanical gate, run by
+hand against GitHub, passed (`agent-guard.sh issue 34`: ok). No branch, commit
+or PR exists for #34. The issue was moved to `agent:blocked` by hand, with the
+evidence and the next steps in
+[its comment](https://github.com/yurisismotto/pliwee/issues/34#issuecomment-5976853015).
+Verdict: **BLOCKED**, not a failure of the worker — the worker never ran.
+
 ## Activation
 
 ### Order
