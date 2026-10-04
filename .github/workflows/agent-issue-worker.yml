@@ -268,13 +268,15 @@ jobs:
           title="$(gh issue view "$ISSUE" -R "$PLIWEE_REPO" --json title --jq '.title')"
 
           {
+              printf '<!-- pliwee-agent-issue:%s -->\n\n' "$ISSUE"
               printf 'Implements #%s\n\n' "$ISSUE"
               echo '## Autonomous worker handoff'
               echo
               echo 'Claude implemented, tested and committed locally.'
               echo 'The trusted workflow validated the commit and published it.'
               echo
-              echo 'This PR intentionally remains a Draft. No auto-merge is enabled.'
+              echo 'This PR intentionally remains a Draft. The worker never authorizes its own merge.'
+              echo 'After review, only the repository owner may authorize finalization by commenting `@pliwee merge` on this PR.'
           } > "$RUNNER_TEMP/pr-body.md"
 
           existing="$(gh pr list -R "$PLIWEE_REPO" \
@@ -346,6 +348,13 @@ jobs:
               '.[0].body | test("Implements #" + $n + "([^0-9]|$)")' \
               <<<"$pr" >/dev/null || {
               echo "::error::PR body does not reference Implements #$ISSUE"
+              exit 1
+          }
+
+          jq -e --arg n "$ISSUE" \
+              '.[0].body | contains("<!-- pliwee-agent-issue:" + $n + " -->")' \
+              <<<"$pr" >/dev/null || {
+              echo "::error::PR body does not carry the trusted issue marker"
               exit 1
           }
 

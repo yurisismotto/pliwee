@@ -40,18 +40,27 @@ Claude Code, headless, pliwee-issue-worker skill
     PLAN → branch feature/issue-N-<slug> from origin/main
     IMPLEMENT → TEST → FIX → RETEST (until a real PASS or a real blocker)
     SELF-REVIEW (separate subagent for protocol / security changes)
-    TIER 1 GATES → COMMIT → PUSH → DRAFT PR "Implements #N"
+    TIER 1 GATES → STAGE → COMMIT THROUGH FIXED WRAPPER
+    ↓
+trusted workflow verifies local result → PUSH → DRAFT PR "Implements #N"
     ↓
 workflow verifies what reached GitHub: one branch, owner's commits,
 no attribution, one open draft PR
     ↓
 agent:review                     CI runs independently on the PR
     ↓
-owner reviews, runs Tier 2/3 if needed, merges — or does not
+owner reviews, runs Tier 2/3 if needed
+    ↓
+owner comments exactly  @pliwee merge  on the PR
+    ↓
+trusted owner-merge workflow locks the approved head SHA, requires green CI,
+marks ready, merges, deletes the feature branch and closes the issue
 ```
 
 The agent never merges, never marks a PR ready, never enables auto-merge,
-never pushes to `main`, never closes an issue.
+never pushes to `main`, never closes an issue. Finalization starts only from
+the repository owner's exact `@pliwee merge` PR comment. If HEAD changes after
+that authorization, finalization is refused.
 
 ## Git authorship — the deciding constraint
 
