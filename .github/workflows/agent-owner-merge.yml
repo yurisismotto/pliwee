@@ -69,6 +69,7 @@ jobs:
 
           issue="${BASH_REMATCH[1]}"
           sha="$(jq -r .head.sha <<<"$pr")"
+          base_sha="$(jq -r .base.sha <<<"$pr")"
           body="$(jq -r '.body // ""' <<<"$pr")"
 
           grep -Fqx "<!-- pliwee-agent-issue:$issue -->" <<<"$body" || {
@@ -149,6 +150,7 @@ jobs:
 
           echo "issue=$issue" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
 
       - name: Wait for CI
         shell: bash
@@ -182,26 +184,41 @@ jobs:
             }
           done
 
-      - name: Verify approved SHA and merge
+      - name: Verify approved SHAs, merge, and verify integration commit
         shell: bash
         env:
           APPROVED_SHA: ${{ steps.preflight.outputs.sha }}
+          APPROVED_BASE_SHA: ${{ steps.preflight.outputs.base_sha }}
         run: |
           set -euo pipefail
 
-          current="$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)"
+          pr="$(gh api "repos/$REPO/pulls/$PR")"
+          current="$(jq -r .head.sha <<<"$pr")"
+          current_base="$(jq -r .base.sha <<<"$pr")"
 
           [ "$current" = "$APPROVED_SHA" ] || {
             echo "::error::HEAD changed after owner approval"
             exit 1
           }
 
+          [ "$current_base" = "$APPROVED_BASE_SHA" ] || {
+            echo "::error::main changed after owner approval; review again"
+            exit 1
+          }
+
           gh pr ready "$PR" -R "$REPO"
 
-          current="$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)"
+          pr="$(gh api "repos/$REPO/pulls/$PR")"
+          current="$(jq -r .head.sha <<<"$pr")"
+          current_base="$(jq -r .base.sha <<<"$pr")"
 
           [ "$current" = "$APPROVED_SHA" ] || {
             echo "::error::HEAD changed during finalization"
+            exit 1
+          }
+
+          [ "$current_base" = "$APPROVED_BASE_SHA" ] || {
+            echo "::error::main changed during finalization"
             exit 1
           }
 
@@ -210,10 +227,37 @@ jobs:
             --delete-branch \
             --match-head-commit "$APPROVED_SHA"
 
-          [ "$(gh api "repos/$REPO/pulls/$PR" --jq .merged)" = true ] || {
+          merged="$(gh api "repos/$REPO/pulls/$PR")"
+
+          [ "$(jq -r .merged <<<"$merged")" = true ] || {
             echo "::error::PR was not merged"
             exit 1
           }
+
+          merge_sha="$(jq -r .merge_commit_sha <<<"$merged")"
+
+          [ -n "$merge_sha" ] && [ "$merge_sha" != "null" ] || {
+            echo "::error::GitHub did not report a merge commit SHA"
+            exit 1
+          }
+
+          integration="$(gh api "repos/$REPO/commits/$merge_sha")"
+
+          jq -e \
+            --arg base "$APPROVED_BASE_SHA" \
+            --arg head "$APPROVED_SHA" '
+              (.parents | length) == 2 and
+              .parents[0].sha == $base and
+              .parents[1].sha == $head
+            ' <<<"$integration" >/dev/null || {
+              echo "::error::integration merge commit has unexpected parents"
+              jq '{sha, parents: [.parents[].sha]}' <<<"$integration"
+              exit 1
+          }
+
+          echo "  ok    integration commit $merge_sha"
+          echo "  ok    parent[0] = approved main $APPROVED_BASE_SHA"
+          echo "  ok    parent[1] = approved PR HEAD $APPROVED_SHA"
 
       - name: Close issue
         shell: bash
