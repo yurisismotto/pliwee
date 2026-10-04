@@ -1,0 +1,128 @@
+# CI-005 — the whole desktop Rust workspace, every test target.
+#
+# What this proves, and what it does not
+# --------------------------------------
+# It proves that every crate in `desktop/` builds with its tests and that every
+# test which runs without a desktop session PASSES, on a GitHub-hosted Ubuntu
+# runner, from the committed lockfile. That includes what no other workflow
+# runs: pliwee-runtime, pliwee-daemon, pliwee-cli, pliwee-gui, pliwee-linux and
+# pliwee-capability-notifications, the hostile-client suite, and end-to-end
+# pairing over loopback TLS. These are PRODUCT tests; the harness's own
+# self-tests are a separate workflow (harness-selftests.yml), deliberately.
+#
+# It is NOT desktop runtime certification. The runner has no compositor, no
+# session bus, no logind session and no notification server. The tests that
+# need one are `#[ignore]` in the source with the reason in the attribute (25
+# of them on 2026-10-04: real clipboard, notification server, logind, UPower),
+# and `cargo test` lists each as `ignored` in this job's log. They are Tier 2/3
+# gates (docs/development/TEST-TIERS.md) and are never reported as run here.
+#
+# Why `--all-targets`, and why that is the whole suite
+# ---------------------------------------------------
+# `--all-targets` runs lib, bin, integration-test, example and bench targets.
+# It does not run doctests — and the workspace has none: on 2026-10-04
+# `cargo test --workspace --doc` ran 0 doctests in all 11 library crates. A
+# step for them would measure nothing, which AGENTS.md calls invalid. If a
+# doctest is ever added, add `cargo test --locked --workspace --doc` here.
+#
+# Why no path filter
+# ------------------
+# This job is meant to be a REQUIRED check on `main`. A required check from a
+# path-filtered workflow never reports on a PR outside its paths, and GitHub
+# then waits for it forever. So it runs on every pull request.
+#
+# Why no cache
+# ------------
+# None of the desktop workflows caches `target/`, and this one does not start:
+# a cache restored from another ref is state this job did not build, and the
+# full run measured 215 s, build included, on the owner's host. Speed is not worth a
+# question about what was tested.
+#
+# Fork pull requests: read-only token, no secret is referenced, GitHub-hosted
+# runner. Nothing here is privileged, so a fork's code runs with nothing to take.
+
+name: Rust workspace · full test suite
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-workspace-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: desktop
+
+env:
+  CARGO_TERM_COLOR: always
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  rust-workspace:
+    name: rust-workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # The measured minimum desktop-quality.yml and linux-distro-compat.yml
+      # install, for the same reasons, and nothing else.
+      - name: Native build dependencies
+        working-directory: .
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc libc6-dev pkg-config libgtk-4-dev libadwaita-1-dev
+
+      - name: Rust toolchain · whatever rust-toolchain.toml asks for
+        run: |
+          set -eux
+          rustup show active-toolchain
+          rustc -Vv
+          cargo -V
+
+      # Four pliwee-core tests assert that a key in a mode-0000 directory reads
+      # back as PermissionDenied. As root that is impossible to arrange
+      # (CAP_DAC_OVERRIDE), and they would fail for a reason that says nothing
+      # about Pliwee — linux-distro-compat.yml has to skip them in its root
+      # containers. Here they run, so the precondition is checked, not assumed.
+      - name: Precondition · an unprivileged user
+        run: |
+          set -eu
+          uid="$(id -u)"
+          echo "uid ${uid}"
+          [ "${uid}" != 0 ] || { echo "::error::running as root: the mode-0000 permission tests cannot mean anything"; exit 1; }
+
+      - name: cargo test · workspace, all targets
+        run: |
+          set -o pipefail
+          cargo test --locked --workspace --all-targets 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"
+
+      # cargo's exit status already failed the step above on any failing test.
+      # This makes the job also fail on the opposite false green — a run that
+      # executed nothing — and prints the totals that belong in a PR's evidence.
+      - name: What this job measured
+        run: |
+          set -eu
+          log="$RUNNER_TEMP/cargo-test.log"
+          totals="$(grep -E '^test result: ' "$log" \
+              | awk '{ s++; p += $4; f += $6; i += $8 } END { printf "%d %d %d %d", s, p, f, i }')"
+          read -r suites passed failed ignored <<<"$totals"
+          echo "suites ${suites} · passed ${passed} · failed ${failed} · ignored ${ignored}"
+          if [ "${suites}" -eq 0 ] || [ "${passed}" -eq 0 ]; then
+              echo "::error::no test ran; a suite that ran nothing is not a pass"; exit 1
+          fi
+          [ "${failed}" -eq 0 ] || { echo "::error::${failed} test(s) failed"; exit 1; }
+          echo
+          echo "Ignored — real-session tests, NOT run here (Tier 2/3):"
+          grep -E '^test .* \.\.\. ignored' "$log" | sed 's/^/  /' || echo "  (none)"

@@ -102,6 +102,28 @@ it.
 it as not executed with the reason. `n/a` with an explanation is evidence;
 a green tick over nothing is not.
 
+## Autonomous issue work
+
+An agent working unattended on an issue does so only under these rules,
+whatever tool runs it. The process and its reasons are in
+[`docs/development/AGENT-WORKFLOW.md`](docs/development/AGENT-WORKFLOW.md).
+
+* **Only the owner starts it.** An agent takes an issue only when the
+  repository owner has labelled it `agent:ready`. It never picks up an open
+  issue on its own initiative, and it works on one issue per branch.
+* **The issue is the scope contract.** An ADR that is not Accepted, a SPEC that
+  does not exist, an open blocker or an open owner decision means the agent
+  stops, labels the issue `agent:blocked` and says exactly what is missing. It
+  never decides an architecture question in order to continue, and never
+  modifies an Accepted ADR to fit an implementation.
+* **It proposes; the owner disposes.** An agent pushes only its own
+  `feature/issue-<n>-<slug>` branch and opens a **draft** pull request that
+  says "Implements #n". It never merges, marks a PR ready, enables auto-merge,
+  pushes to `main`, force-pushes, or closes the issue.
+* **Its tests do not replace CI**, and a gate is never weakened, skipped or
+  removed to let an agent pass. What it could not run is reported as
+  `NOT EXECUTED — <reason>`.
+
 ## Git Authorship Policy
 
 AI agents are development tools, not repository contributors.

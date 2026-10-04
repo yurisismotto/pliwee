@@ -1,0 +1,260 @@
+# Agent — the issue worker. OFF until the owner turns it on.
+#
+# What it does
+# ------------
+# When the repository owner labels an issue `agent:ready`, a self-hosted runner
+# on the owner's Fedora host checks the issue mechanically
+# (.github/agent/agent-guard.sh), then runs Claude Code headless with the
+# pliwee-issue-worker skill, which reads the issue, judges its ADRs and SPECs,
+# implements, tests, reviews, pushes feature/issue-N-<slug> and opens a DRAFT
+# pull request. It never merges. The owner reviews and merges, or does not.
+#
+# Why it is off, and why it is self-hosted
+# ----------------------------------------
+# * The job runs only when the repository variable PLIWEE_AGENT_WORKER is
+#   exactly `enabled`. Unset, it is skipped. (Phase C of
+#   docs/development/AGENT-WORKFLOW.md; Phases A and B come first.)
+# * It needs a runner labelled `pliwee-agent`, and none is registered.
+# * AGENTS.md § Git Authorship Policy: commits use the owner's configured
+#   identity — decided as Yuri C. Sismotto <yuri.sismotto@hotmail.com> — and
+#   carry no AI attribution. anthropics/claude-code-action@v1 sets
+#   `git config user.name/user.email` to its bot account in every mode, and its
+#   prompt asks for a Co-authored-by trailer — so that action is NOT used here.
+#   On the owner's host, git uses the identity the owner configured, the guard
+#   verifies it before and after, and nothing in this file sets one.
+#
+# Why it cannot be triggered by anyone else
+# -----------------------------------------
+# * The only trigger is `issues: labeled`. No pull_request, pull_request_target,
+#   issue_comment or workflow_run event can reach this self-hosted runner, so
+#   code from a fork never runs on it.
+# * The job requires the label to be `agent:ready` AND the person who applied it
+#   to be the repository owner; the guard then requires the issue to have been
+#   opened, and last edited, by the owner.
+#
+# Credentials
+# -----------
+# GITHUB_TOKEN (below: issues:write, contents:read) is used only for labels and
+# comments. The push and the draft PR use the runner account's own gh login — a
+# fine-grained token the owner created for this repository, with contents,
+# pull requests and issues write and NO workflows or administration permission.
+# That is also why the PR's checks run: a push made with GITHUB_TOKEN would not
+# trigger CI at all.
+
+name: Agent · issue worker
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: agent-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  work:
+    if: >-
+      vars.PLIWEE_AGENT_WORKER == 'enabled' &&
+      github.event.label.name == 'agent:ready' &&
+      github.event.sender.login == github.repository_owner &&
+      github.event.issue.pull_request == null
+    runs-on: [self-hosted, linux, pliwee-agent]
+    timeout-minutes: 180
+    env:
+      ISSUE: ${{ github.event.issue.number }}
+      PLIWEE_REPO: ${{ github.repository }}
+      PLIWEE_AGENT_BASE: origin/main
+      MAX_TURNS: ${{ vars.PLIWEE_AGENT_MAX_TURNS || '200' }}
+      MAX_BUDGET_USD: ${{ vars.PLIWEE_AGENT_MAX_BUDGET_USD || '25' }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # PLIWEE_OWNER_NAME / _EMAIL / _LOGIN come from the runner's own .env,
+      # written by the owner: Yuri C. Sismotto <yuri.sismotto@hotmail.com>
+      # (owner decision, 2026-10-04). The guard fails if any is missing.
+      # An environment that cannot commit as the owner does not commit at all:
+      # it reports BLOCKED, and nothing is repaired.
+      - name: Identity — the owner's, or BLOCKED
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          out="$(./.github/agent/agent-guard.sh identity 2>&1)"; rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -eq 0 ] && exit 0
+          {
+              echo "BLOCKED — this runner cannot commit as the repository owner, so the issue worker did not start."
+              echo
+              echo '```'
+              printf '%s\n' "$out"
+              echo '```'
+              echo
+              echo "Nothing was committed. The worker does not repair a git identity (AGENTS.md § Git Authorship Policy). Run: $RUN_URL"
+          } > "$RUNNER_TEMP/identity.md"
+          gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:blocked --remove-label agent:ready || true
+          gh issue comment "$ISSUE" -R "$PLIWEE_REPO" --body-file "$RUNNER_TEMP/identity.md" || true
+          exit 1
+
+      # The guard rails the worker is held to are copied out of the checkout
+      # before Claude starts, from main as checked out above. The hooks and the
+      # verification below run that copy, so an edit to .github/agent/** in the
+      # working tree — or on the pushed branch — cannot change what judges it.
+      - name: Take a trusted copy of the guard rails
+        run: |
+          set -eu
+          t="$RUNNER_TEMP/trusted"
+          rm -rf "$t"; mkdir -p "$t/.github" "$t/packaging/tests/lib"
+          cp -a .github/agent "$t/.github/agent"
+          cp -a packaging/tests/lib/assert.sh "$t/packaging/tests/lib/assert.sh"
+          echo "GUARD=$t/.github/agent/agent-guard.sh" >> "$GITHUB_ENV"
+
+      # A hooksPath that does not exist makes git run no hook at all, silently.
+      # So the path is checked, not assumed.
+      - name: Install the worker's git hooks in this checkout only
+        run: |
+          set -eu
+          git config core.hooksPath "$RUNNER_TEMP/trusted/.github/agent/hooks"
+          for h in commit-msg pre-push; do
+              f="$(git config core.hooksPath)/$h"
+              [ -x "$f" ] || { echo "::error::$f is missing or not executable; git would skip it silently"; exit 1; }
+              echo "  ok    $f"
+          done
+
+      - name: Dependency gate — the mechanical half
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          out="$(./.github/agent/agent-guard.sh issue "$ISSUE" 2>&1)"; rc=$?
+          set -e
+          printf '%s\n' "$out"
+          if [ "$rc" -eq 3 ]; then
+              {
+                  echo "The issue worker did not start: the issue is not mechanically ready."
+                  echo
+                  sed -n 's/^blocked: /- /p' <<<"$out"
+                  echo
+                  echo "Re-apply \`agent:ready\` once these are resolved. Run: $RUN_URL"
+              } > "$RUNNER_TEMP/blocked.md"
+              gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:blocked --remove-label agent:ready
+              gh issue comment "$ISSUE" -R "$PLIWEE_REPO" --body-file "$RUNNER_TEMP/blocked.md"
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+          elif [ "$rc" -eq 0 ]; then
+              echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "::error::the gate could not measure the issue (exit $rc)"; exit 1
+          fi
+
+      - name: Claim the issue
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue edit "$ISSUE" -R "$PLIWEE_REPO" \
+              --add-label agent:working --remove-label agent:ready --remove-label agent:blocked
+
+      # GH_TOKEN is deliberately absent: Claude, git and gh use the runner
+      # account's own login, so the push triggers CI.
+      - name: Work the issue — Claude Code, headless
+        if: steps.gate.outputs.ready == 'true'
+        id: work
+        run: |
+          claude -p "/pliwee-issue-worker $ISSUE" \
+              --settings .github/agent/claude-settings.json \
+              --max-turns "$MAX_TURNS" \
+              --max-budget-usd "$MAX_BUDGET_USD" \
+              --output-format json \
+              < /dev/null > "$RUNNER_TEMP/claude-result.json"
+          jq '{terminal_reason, num_turns, total_cost_usd, permission_denials: [.permission_denials[]?.tool_input.command]}' \
+              "$RUNNER_TEMP/claude-result.json"
+
+      # The skill labels the issue agent:blocked itself when its judgement half
+      # of the dependency gate stops it (an ADR not accepted, a SPEC missing).
+      # That is an outcome, not a failure: no branch is expected.
+      - name: Did the worker stop on a blocker?
+        if: steps.gate.outputs.ready == 'true'
+        id: worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          labels="$(gh issue view "$ISSUE" -R "$PLIWEE_REPO" --json labels --jq '[.labels[].name] | join(" ")')"
+          echo "labels now: $labels"
+          if [[ " $labels " == *" agent:blocked "* ]]; then
+              gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --remove-label agent:working
+              echo "blocked=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "blocked=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Trust nothing the worker said about itself: measure what reached GitHub,
+      # with the guard copied before the worker ran.
+      - name: Verify what was pushed
+        if: steps.gate.outputs.ready == 'true' && steps.worker.outputs.blocked == 'false'
+        id: verify
+        run: |
+          set -eu
+          git fetch -q origin
+          branch="$(git for-each-ref --format='%(refname:strip=3)' "refs/remotes/origin/feature/issue-$ISSUE-*")"
+          n="$(grep -c . <<<"$branch" || true)"
+          [ "$n" = 1 ] || { echo "::error::expected exactly one origin/feature/issue-$ISSUE-* branch, found $n"; exit 1; }
+          git switch -q -c "$branch" "origin/$branch"
+          "$GUARD" branch "$ISSUE"
+          "$GUARD" commits "$PLIWEE_AGENT_BASE"
+          "$GUARD" paths "$PLIWEE_AGENT_BASE"
+          pr="$(gh pr list -R "$PLIWEE_REPO" --head "$branch" --state all --json number,isDraft,state,body,autoMergeRequest,baseRefName)"
+          jq -e 'length == 1' <<<"$pr" > /dev/null || { echo "::error::expected one PR for $branch: $pr"; exit 1; }
+          jq -e '.[0].state == "OPEN" and .[0].isDraft == true' <<<"$pr" > /dev/null \
+              || { echo "::error::the PR for $branch is not an open draft"; exit 1; }
+          jq -e '.[0].autoMergeRequest == null' <<<"$pr" > /dev/null \
+              || { echo "::error::auto-merge is enabled on the PR for $branch; the worker never enables it"; exit 1; }
+          jq -e '.[0].baseRefName == "main"' <<<"$pr" > /dev/null \
+              || { echo "::error::the PR for $branch does not target main"; exit 1; }
+          jq -e --arg n "$ISSUE" '.[0].body | test("Implements #" + $n + "([^0-9]|$)")' <<<"$pr" > /dev/null \
+              || { echo "::error::the PR body does not say Implements #$ISSUE"; exit 1; }
+          echo "  ok    $branch: one open draft PR to main, no auto-merge, commits by the owner, no attribution, no protected path"
+
+      - name: Hand over to the owner
+        if: steps.verify.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:review --remove-label agent:working
+
+      - name: Record the failure
+        if: failure() && steps.identity.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUT_GATE: ${{ steps.gate.outcome }}
+          OUT_WORK: ${{ steps.work.outcome }}
+          OUT_VERIFY: ${{ steps.verify.outcome }}
+        run: |
+          git fetch -q origin || true
+          branches="$(git for-each-ref --format='%(refname:strip=3) %(objectname:short)' "refs/remotes/origin/feature/issue-$ISSUE-*")"
+          {
+              echo "FAILED — the issue worker stopped. Nothing was merged, and the PR, if any, stays a draft."
+              echo
+              echo "| Step | Outcome |"
+              echo "| --- | --- |"
+              echo "| dependency gate | ${OUT_GATE:-not run} |"
+              echo "| Claude Code worker | ${OUT_WORK:-not run} |"
+              echo "| verification of what was pushed | ${OUT_VERIFY:-not run} |"
+              echo
+              echo "Branch and last commit: ${branches:-none pushed}"
+              echo
+              echo "Evidence — the failing step's log: $RUN_URL"
+              echo
+              echo "No automatic retry. Re-apply \`agent:ready\` once the cause is understood."
+          } > "$RUNNER_TEMP/failed.md"
+          gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:failed --remove-label agent:working || true
+          gh issue comment "$ISSUE" -R "$PLIWEE_REPO" --body-file "$RUNNER_TEMP/failed.md" || true

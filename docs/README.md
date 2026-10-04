@@ -23,6 +23,7 @@ its filename looks like.
 | a sprint result, implementation report or hardening report | [`reports/<area>/`](reports/) | `reports/notifications/` |
 | a record of a rename, port or data migration | [`migrations/`](migrations/) | `migrations/MIGRATION-ANYFLOW-TO-OMNIBRIDGE.md` |
 | a public-facing policy the app or a store links to | [`policy/`](policy/) | `policy/PRIVACY-POLICY.md` |
+| how the project is developed: process, CI map, agent workflow, kept current | [`development/`](development/) | `development/TEST-TIERS.md` |
 | the product roadmap: where the project is heading, kept current | [`roadmap/`](roadmap/) | `roadmap/ROADMAP.md` |
 
 The three that are easiest to confuse:
@@ -73,6 +74,7 @@ docs/
 │   ├── notifications/          notifications.v1 N0 → N5 waves — see its README
 │   ├── security/               trust-store and device-revocation work
 │   └── ux/                     UX hardening and debt cleanup
+├── development/                the development process, kept current: AGENT-WORKFLOW, TEST-TIERS
 ├── migrations/                 AnyFlow → OmniBridge; the OmniBridge 1.0.0 Fedora firewall erratum
 ├── policy/                     public policies the app links to: PRIVACY-POLICY (its URL is compiled into the app)
 └── roadmap/                    ROADMAP — the directional product roadmap; GitHub milestones and issues carry the detail

@@ -1,0 +1,88 @@
+# CI-004 — the autonomous issue worker's own guard rails.
+#
+# What this proves, and what it does not
+# --------------------------------------
+# It proves that .github/agent/agent-guard.sh still REJECTS every failure mode
+# it was written for — a bot identity, an AI attribution trailer, a push to
+# main, a force-push, an issue nobody approved, an open blocker, a fetch that
+# failed — and still ACCEPTS the good case, and that the worker's permission
+# file is valid JSON that still denies merging. It runs on GitHub-hosted
+# runners, needs no secret, and never runs the worker or Claude.
+#
+# It says nothing about whether the worker is enabled, or safe to enable: that
+# is the owner's decision, recorded in docs/development/AGENT-WORKFLOW.md.
+
+name: Agent · guard rails
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - '.github/agent/**'
+      - '.github/workflows/agent-*.yml'
+      - '.claude/skills/pliwee-issue-worker/**'
+      - 'packaging/tests/lib/assert.sh'
+  push:
+    branches: [main, develop]
+    paths:
+      - '.github/agent/**'
+      - '.github/workflows/agent-*.yml'
+      - '.claude/skills/pliwee-issue-worker/**'
+      - 'packaging/tests/lib/assert.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: agent-guard.sh self-test, shellcheck, settings
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell parses
+        run: |
+          for f in .github/agent/agent-guard.sh .github/agent/hooks/*; do
+              bash -n "$f" && printf '  ok    %s parses\n' "$f"
+          done
+
+      - name: Shellcheck
+        run: |
+          shellcheck --version
+          shellcheck -S warning .github/agent/agent-guard.sh .github/agent/hooks/*
+
+      - name: The hooks are executable and call the guard
+        run: |
+          set -eu
+          for h in commit-msg pre-push; do
+              f=".github/agent/hooks/$h"
+              [ -x "$f" ] || { echo "::error::$f is not executable; git would skip it silently"; exit 1; }
+              grep -q 'agent-guard.sh' "$f" || { echo "::error::$f no longer calls agent-guard.sh"; exit 1; }
+              echo "  ok    $f"
+          done
+
+      - name: agent-guard.sh --selftest — every check rejects what it must
+        run: ./.github/agent/agent-guard.sh --selftest
+
+      - name: Worker permissions — valid, and merging stays denied
+        run: |
+          set -eu
+          f=.github/agent/claude-settings.json
+          jq -e . "$f" > /dev/null
+          for rule in 'Bash(gh pr merge:*)' 'Bash(gh pr ready:*)' 'Bash(gh pr edit --add-reviewer:*)' 'Bash(git push --force:*)' \
+                      'Bash(git push --no-verify:*)' 'Bash(git commit --no-verify:*)' 'Bash(git config:*)' \
+                      'Edit(.github/workflows/**)' 'Edit(AGENTS.md)'; do
+              jq -e --arg r "$rule" '.permissions.deny | index($r) != null' "$f" > /dev/null \
+                  || { echo "::error::$f no longer denies $rule"; exit 1; }
+              echo "  ok    denies $rule"
+          done
+          if jq -e '.permissions.allow[] | select(test("merge|--force|--no-verify|bypass"; "i"))' "$f" > /dev/null; then
+              echo "::error::$f allows something it must deny"; exit 1
+          fi
+          echo "  ok    allows nothing that merges, force-pushes or skips hooks"
