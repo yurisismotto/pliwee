@@ -1,4 +1,4 @@
-# ADR-0021 — Any-to-any topology and symmetric pairing
+# ADR-0022 — Any-to-any topology and symmetric pairing
 
 **Status:** Proposed · 2026-10-04
 
