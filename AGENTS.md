@@ -130,7 +130,26 @@ AI agents are development tools, not repository contributors.
 
 Agents MUST NOT modify Git author or committer identity.
 
-All commits must use the repository owner's configured Git identity.
+All **contributor-created commits** — including every commit produced on an
+agent feature branch — must use the repository owner's configured Git identity.
+
+A GitHub-generated **integration merge commit** is the only narrow exception.
+When GitHub itself creates the merge commit after an explicit owner-approved
+pull request merge, GitHub may record its own server or automation identity as
+author and/or committer. That integration commit is not agent authorship and is
+permitted only when all of the following are true:
+
+- every commit on the merged feature branch already passed the owner-identity
+  checks above;
+- the repository owner explicitly authorized that exact pull-request HEAD;
+- the merge mechanism is the trusted repository merge path, not a direct push;
+- the resulting merge commit has exactly the pre-merge `main` commit and the
+  approved pull-request HEAD as its two parents;
+- the integration commit contains no independently authored automation change.
+  Its purpose is only to join the two already-reviewed histories.
+
+This exception does **not** permit an agent to author or commit as a bot, does
+not permit identity overrides, and does not relax the no-attribution rule.
 
 Never add AI attribution trailers, including:
 
@@ -140,7 +159,7 @@ Never add AI attribution trailers, including:
 - AI-generated attribution
 - agent authorship or co-authorship
 
-Before every commit, verify:
+Before every contributor-created commit, verify:
 
     git config user.name
     git config user.email

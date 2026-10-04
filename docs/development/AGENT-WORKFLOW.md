@@ -59,14 +59,22 @@ marks ready, merges, deletes the feature branch and closes the issue
 
 The agent never merges, never marks a PR ready, never enables auto-merge,
 never pushes to `main`, never closes an issue. Finalization starts only from
-the repository owner's exact `@pliwee merge` PR comment. If HEAD changes after
-that authorization, finalization is refused.
+the repository owner's exact `@pliwee merge` PR comment. The workflow pins
+both the approved PR HEAD and the then-current `main` SHA; if either changes
+after authorization, finalization is refused. After GitHub merges, the
+workflow verifies that the server-generated integration commit has exactly
+those two SHAs as its parents.
 
 ## Git authorship — the deciding constraint
 
 [AGENTS.md § Git Authorship Policy](../../AGENTS.md#git-authorship-policy):
-commits use the repository owner's configured identity, the agent never
-modifies it, and no AI attribution trailer is ever added.
+every contributor-created commit uses the repository owner's configured
+identity, the agent never modifies it, and no AI attribution trailer is ever
+added. A server-generated GitHub merge commit is a narrow integration-record
+exception: it may carry GitHub's server/automation identity only after explicit
+owner approval, and the owner-merge workflow proves that its two parents are
+the approved `main` SHA and the approved PR HEAD. It contains no independent
+agent-authored change.
 
 **`anthropics/claude-code-action@v1` does not meet this, on any runner.**
 Measured in its source at the `v1` tag on 2026-10-04:
@@ -113,8 +121,12 @@ Automated development preserves it:
   the agent does not commit: it reports `BLOCKED`** — the issue is labelled
   `agent:blocked` with a comment saying so;
 * the identity GitHub shows for pull-request and issue activity may be the
-  automation or integration actor; **commit authorship** follows AGENTS.md
-  regardless.
+  automation or integration actor; contributor-created **commit authorship**
+  follows AGENTS.md regardless;
+* the merge commit GitHub creates after the owner's explicit approval is an
+  integration record, not a contributor-created commit. Its server identity is
+  permitted only under AGENTS.md's narrow exception, and the workflow verifies
+  its exact two-parent provenance before closing the issue.
 
 ## Labels — the work queue
 

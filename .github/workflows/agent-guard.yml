@@ -105,3 +105,24 @@ jobs:
               echo "::error::$f allows something it must deny"; exit 1
           fi
           echo "  ok    allows nothing that merges, force-pushes or skips hooks"
+
+      - name: Owner merge — integration commit provenance stays enforced
+        run: |
+          set -eu
+          f=.github/workflows/agent-owner-merge.yml
+
+          for needle in \
+              'base_sha="$(jq -r .base.sha' \
+              'APPROVED_BASE_SHA:' \
+              'main changed after owner approval; review again' \
+              'merge_commit_sha' \
+              '(.parents | length) == 2' \
+              '.parents[0].sha == $base' \
+              '.parents[1].sha == $head'; do
+              grep -Fq "$needle" "$f" || {
+                  echo "::error::$f lost integration provenance check: $needle"
+                  exit 1
+              }
+          done
+
+          echo "  ok    owner merge pins base + head and verifies both merge parents"
