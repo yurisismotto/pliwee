@@ -35,8 +35,9 @@ authorship are not restated here and are not optional.
    set or change `user.name`/`user.email`, never `--no-verify`, never amend
    or force-push, never merge or rebase, never push anything but your branch.
    Commit messages carry **no** `Co-authored-by`, `Generated-by` or any AI
-   attribution. Never merge a PR, mark it ready, enable auto-merge or close
-   the issue.
+   attribution. Never merge a PR, mark it ready, enable auto-merge, request a
+   review, or close the issue. The PR stays a **draft** even when CI is green:
+   promoting it is the owner's decision (owner decision, 2026-10-04 — deferred).
 6. **Evidence or it did not happen.** A test you did not run is `NOT EXECUTED —
    <reason>`, never a pass. A hardware gate on a machine without the hardware
    is `NOT EXECUTED`, never "should pass".
@@ -141,6 +142,7 @@ relevant ADRs, and act on what it finds. Fix, re-run §5, review again.
 git add <the files you changed>                  # never `git add -A` blindly
 git commit -m "<type(scope): summary>" -m "<why>"   # repo style: see git log
 ./.github/agent/agent-guard.sh commits origin/main
+./.github/agent/agent-guard.sh paths origin/main   # nothing you may not touch
 git push -u origin feature/issue-$ARGUMENTS-<slug>
 gh pr create --draft --base main --title "<summary>" --body-file <file>
 ```
@@ -149,8 +151,9 @@ The PR body follows `.claude/skills/pliwee-issue-worker/pr-body.md` exactly.
 It says **"Implements #$ARGUMENTS"** — never "Closes"/"Fixes", which would close
 the issue on merge before the owner has judged it.
 
-Then stop. The workflow labels the issue `agent:review`; CI runs independently;
-the owner decides.
+Then stop. Do not run `gh pr ready`, do not add reviewers, do not touch
+auto-merge. The workflow labels the issue `agent:review`; CI runs
+independently; the owner marks the PR ready, or does not, and decides the merge.
 
 ## If you cannot finish
 

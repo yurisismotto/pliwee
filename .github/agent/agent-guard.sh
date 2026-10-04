@@ -6,6 +6,9 @@
 #   agent-guard.sh branch ISSUE      HEAD is feature/issue-ISSUE-<slug>, nothing else
 #   agent-guard.sh commits BASE      every commit in BASE..HEAD is the owner's,
 #                                    is not a merge, and carries no AI attribution
+#   agent-guard.sh paths BASE        no file changed in BASE...HEAD is one the
+#                                    worker may not touch (its guard rails, CI,
+#                                    AGENTS.md, historical evidence)
 #   agent-guard.sh issue ISSUE       the issue is approved and nothing open blocks it
 #   agent-guard.sh message FILE      a commit message carries no AI attribution
 #   agent-guard.sh push              pre-push: reads git's ref lines on stdin and
@@ -119,6 +122,27 @@ check_commits() {
     done
     [ "$bad" -eq 0 ] || return 1
     printf 'ok    commits: %d in %s..HEAD, all by the owner, no merges, no attribution\n' "${#revs[@]}" "$base"
+}
+
+# ---------------------------------------------------------------------------
+# paths BASE — what the worker may not change, checked on what it committed
+# rather than trusted to its permission rules (which are prefix matches, and
+# advisory). Renames are split so a file moved out of a protected directory
+# still counts as touching it. An empty change set is a failure: nothing was
+# measured.
+# ---------------------------------------------------------------------------
+PROTECTED_RE='^(\.github/workflows/|\.github/agent/|\.github/actionlint\.yaml$|\.claude/skills/pliwee-issue-worker/|AGENTS\.md$|docs/(audits|certification|reports)/)'
+
+check_paths() {
+    local base="${1:-}" mb changed hit
+    [ -n "$base" ] && git rev-parse --verify -q "$base^{commit}" >/dev/null \
+        || { fail "paths: base '$base' is not a commit"; return 1; }
+    mb="$(git merge-base "$base" HEAD)" || { fail "paths: HEAD shares no history with $base"; return 1; }
+    changed="$(git diff --no-renames --name-only "$mb" HEAD)"
+    need_nonempty "files changed in $base...HEAD" "$changed" || return 1
+    hit="$(grep -E -- "$PROTECTED_RE" <<<"$changed" || true)"
+    [ -z "$hit" ] || { fail "paths: the worker changed what it may not: $(tr '\n' ' ' <<<"$hit")"; return 1; }
+    printf 'ok    paths: %d file(s) changed in %s...HEAD, none protected\n' "$(grep -c '' <<<"$changed")" "$base"
 }
 
 # ---------------------------------------------------------------------------
@@ -307,6 +331,24 @@ selftest() {
     git merge -q --no-ff --no-edit side
     expect 1 "REJECTS a merge commit"                               "$SELF" commits base
 
+    printf '\n== paths ==\n'
+    local keep; keep="$(git rev-parse HEAD)"     # restored below; push needs this state
+    expect 1 "REJECTS a range that changed no file"                 "$SELF" paths base
+    mkdir -p desktop
+    printf 'x\n' > desktop/lib.rs; git add desktop/lib.rs; git commit -q -m "fix: code"
+    expect 0 "ACCEPTS a change to product code"                     "$SELF" paths base
+    expect 1 "REJECTS a base that is not a commit"                  "$SELF" paths no-such-ref
+    local pp
+    for pp in .github/agent/agent-guard.sh .github/workflows/ci.yml AGENTS.md docs/reports/x.md \
+              .claude/skills/pliwee-issue-worker/SKILL.md .github/actionlint.yaml; do
+        mkdir -p "$(dirname "$pp")"; printf 'x\n' > "$pp"; git add -- "$pp"; git commit -q -m "chore: $pp"
+        expect 1 "REJECTS a change to $pp"                          "$SELF" paths base
+        git reset -q --hard HEAD~1
+    done
+    mkdir -p docs/reports; git mv desktop/lib.rs docs/reports/lib.rs; git commit -q -m "chore: move"
+    expect 1 "REJECTS a file renamed into docs/reports/"            "$SELF" paths base
+    git reset -q --hard "$keep"
+
     printf '\n== message ==\n'
     printf 'fix: a thing\n\nWhy it was wrong.\n# Please enter the commit message\n' > "$T/msg-ok"
     printf 'fix: a thing\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' > "$T/msg-bad"
@@ -379,6 +421,7 @@ case "${1:-}" in
     identity)   check_identity ;;
     branch)     check_branch "${2:-}" ;;
     commits)    check_commits "${2:-}" ;;
+    paths)      check_paths "${2:-}" ;;
     issue)      check_issue "${2:-}" ;;
     message)    check_message "${2:-}" ;;
     push)       check_push ;;

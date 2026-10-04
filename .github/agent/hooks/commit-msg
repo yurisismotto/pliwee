@@ -4,5 +4,8 @@
 # identity is not the owner's or whose message carries AI attribution.
 # AGENTS.md § Git Authorship Policy.
 set -uo pipefail
-guard="$(git rev-parse --show-toplevel)/.github/agent/agent-guard.sh"
+# The guard next to this hook, not the one in the working tree: the issue
+# worker runs these hooks from a copy taken before it started, which an edit
+# in the checkout cannot reach.
+guard="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/agent-guard.sh"
 "$guard" identity >/dev/null && "$guard" message "$1"

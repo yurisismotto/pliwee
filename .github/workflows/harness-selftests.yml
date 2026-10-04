@@ -1,0 +1,104 @@
+# CI-006 — the harnesses' own self-tests, every suite that needs no guest.
+#
+# What this proves, and what it does not
+# --------------------------------------
+# It proves that the test harnesses still FAIL when they should and PASS when
+# they should: each suite drives a harness against fixtures and fakes and
+# asserts both halves (AGENTS.md § A PASS with no observed evidence is
+# invalid). These are HARNESS SELF-TESTS. They say nothing about Pliwee itself
+# — product tests are rust-workspace.yml, android-ci.yml and the rest — and the
+# split is deliberate: a red tick here means a gate can no longer be trusted,
+# which is a different finding from a product defect.
+#
+# No VM, no graphical session, no Android device, no macOS, no network beyond
+# the checkout, no secret. Each suite was run on the owner's Fedora host on
+# 2026-10-04 before it was added here; docs/development/TEST-TIERS.md records
+# the counts and the run times.
+#
+#   agent-guard.sh --selftest              the issue worker's guard rails
+#   evidence-whitespace-check.sh --selftest the evidence whitespace guard
+#   harness-selftests.sh                   lib/assert.sh primitives, the
+#                                          static harness checks, and the
+#                                          pre-G8 coordinator's own suite
+#                                          (it runs pre-g8-manual-gates-selftests.sh)
+#   g7up-gui-migration-selftests.sh        G7-UP fixture, U2-5 and the upgrade
+#                                          stage against a fake guest
+#
+# NOT here, and why
+#   release-signing-tests.sh, android/signing/tests/provision-selftest.sh —
+#     they test shipped release and signing tooling, i.e. product, and already
+#     run in packaging-checks.yml and android-ci.yml.
+#   pre-g8-autopilot-selftests.sh — 273 passed, 0 failed, but 1580 s on the
+#     owner's host, and it re-runs the G7-UP suite inside itself. Too slow to
+#     sit in front of every PR; it stays a by-hand suite (TEST-TIERS.md).
+#
+# Why no path filter: this job is meant to be a REQUIRED check on `main`, and a
+# required check that does not report on a PR blocks it forever.
+#
+# Fork pull requests: read-only token, no secret referenced, GitHub-hosted
+# runner, no cache, no artifact. Nothing privileged runs here.
+
+name: Harness · self-tests (no VM)
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-selftests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness-selftests:
+    name: harness-selftests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # What the suites call for real. Each one also checks its own tools and
+      # exits 3 — never 0 — when one is missing (the PRECONDITION lines).
+      - name: Tools the suites need
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends jq gnupg python3 util-linux coreutils
+          for t in jq gpg python3 flock setsid script sha256sum base64 cmp stat git; do
+              command -v "$t" >/dev/null || { echo "::error::$t is missing"; exit 1; }
+          done
+
+      # Each suite must exit 0 AND print its own "N passed, 0 failed" with
+      # N > 0. The exit status alone would accept a suite that ran nothing.
+      - name: Self-test suites
+        run: |
+          set -uo pipefail
+          run_suite() {
+              local name="$1" log rc summary passed failed; shift
+              log="$RUNNER_TEMP/$name.log"
+              echo "::group::$name"
+              "$@" 2>&1 | tee "$log"; rc="${PIPESTATUS[0]}"
+              echo "::endgroup::"
+              summary="$(grep -E '^[0-9]+ passed, [0-9]+ failed' "$log" | tail -1)"
+              passed="${summary%% *}"; failed="$(sed -E 's/^[0-9]+ passed, ([0-9]+) failed.*/\1/' <<<"$summary")"
+              if [ "$rc" -ne 0 ] || [ -z "$summary" ] || [ "$passed" -eq 0 ] || [ "$failed" -ne 0 ]; then
+                  echo "::error::$name: exit $rc, summary '${summary:-none}'"
+                  bad=$((bad + 1))
+              fi
+              printf '%-36s exit %s · %s\n' "$name" "$rc" "${summary:-NO SUMMARY}" >> "$RUNNER_TEMP/summary.txt"
+          }
+          bad=0
+          run_suite agent-guard            ./.github/agent/agent-guard.sh --selftest
+          run_suite evidence-whitespace    ./packaging/tests/evidence-whitespace-check.sh --selftest
+          run_suite harness-selftests      ./packaging/tests/harness-selftests.sh
+          run_suite g7up-gui-migration     ./packaging/tests/g7up-gui-migration-selftests.sh
+          echo
+          echo "HARNESS SELF-TESTS — not product tests"
+          cat "$RUNNER_TEMP/summary.txt"
+          [ "$bad" -eq 0 ]

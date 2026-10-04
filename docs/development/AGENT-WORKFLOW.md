@@ -8,6 +8,12 @@ rails, the skill and the workflow are in the repository; no runner is
 registered and the workflow's switch is off. Nothing here has implemented an
 issue yet.
 
+**2026-10-04, owner decisions applied** ([§ Owner decisions](#owner-decisions)):
+the `main` ruleset and fork-PR approval are live on the server; the two new CI
+jobs are written and await their first observed run; the worker itself is still
+off, and the canary could not run through it — see
+[§ The canary](#the-canary).
+
 [`AGENTS.md`](../../AGENTS.md) remains the vendor-neutral source of truth and
 overrides everything below. This document explains the process and its
 reasons; the procedure an agent follows is
@@ -177,9 +183,10 @@ owner's host; the honesty of the gates; the scope of what was approved.
 | Someone other than the owner starts the worker | trigger is `issues: labeled` only; the job requires the label `agent:ready` **and** sender = repository owner; the guard requires the issue's author and last editor = owner |
 | A fork PR runs code on the self-hosted runner (public repository) | no `pull_request`, `pull_request_target`, `issue_comment` or `workflow_run` workflow targets the `pliwee-agent` runner; every other workflow uses GitHub-hosted runners; fork PR workflows require approval (owner setting, below) |
 | Prompt injection through issue text or comments | only owner-authored, owner-edited issues pass the gate; the skill treats anyone else's comment as data; the token cannot touch workflows or settings, so an injected instruction cannot widen its own power |
-| The agent merges, pushes to `main` or rewrites history | permission deny rules (`gh pr merge`, `--force`, `--no-verify`, `git config`, `git rebase` …); the `pre-push` hook refuses any ref but `feature/issue-N-<slug>`, deletions and non-fast-forwards; the token has no admin; a ruleset on `main` (owner decision) makes it server-side |
+| The agent merges, pushes to `main` or rewrites history | permission deny rules (`gh pr merge`, `gh pr ready`, `--force`, `--no-verify`, `git config`, `git rebase` …); the `pre-push` hook refuses any ref but `feature/issue-N-<slug>`, deletions and non-fast-forwards; the token has no admin; the `main` ruleset (applied 2026-10-04) refuses a direct push, a force-push and a deletion server-side, for everyone, with no bypass. **Not** server-side: a merge of a green PR — see [§ The merge boundary](#the-merge-boundary) |
 | Wrong author or an AI trailer | `commit-msg` and `pre-push` hooks; `agent-guard.sh commits`; the workflow re-checks the pushed branch and fails into `agent:failed` |
-| The agent weakens a gate or edits CI | deny rules on `.github/workflows/**`, `.github/agent/**`, `AGENTS.md`; the token has no `workflows` permission, so GitHub refuses a push that changes a workflow; CI runs again on the PR |
+| The agent weakens a gate or edits CI | deny rules on `.github/workflows/**`, `.github/agent/**`, `AGENTS.md`; the token has no `workflows` permission, so GitHub refuses a push that changes a workflow; `agent-guard.sh paths` refuses a pushed branch that touches CI, the guard rails, the skill, `AGENTS.md` or historical evidence; CI runs again on the PR |
+| The agent edits its own guard so the checks pass | the workflow copies `.github/agent/` and `lib/assert.sh` from `main` into `$RUNNER_TEMP` **before** Claude starts; the git hooks and the post-run verification run that copy, never the one in the working tree or on the pushed branch |
 | A false green from the agent | CI re-runs everything Tier 1 in a clean environment; the workflow measures the branch and PR itself; "Not executed" is mandatory |
 | Runaway cost or a stuck run | `--max-turns` (default 200), `--max-budget-usd` (default 25), `timeout-minutes: 180`, one issue per run, concurrency per issue |
 | Compromise of the runner account | a dedicated OS user with no sudo, no access to the owner's home, the Android signing keys or the release signing key; a fine-grained token scoped to this one repository |
@@ -228,6 +235,9 @@ owner's review.
    ```
 6. In *Settings → Actions → General*: require approval for workflows from
    **all outside collaborators**, so a fork PR never runs without the owner.
+   **Applied 2026-10-04** through the API (`approval_policy:
+   all_external_contributors`, read back from
+   `repos/yurisismotto/pliwee/actions/permissions/fork-pr-contributor-approval`).
 
 Phase E later adds separate, labelled runners for Tier 2 (libvirt guests) and
 Tier 3 (an ADB-connected phone, a Mac) — never the same account as the worker.
@@ -237,9 +247,18 @@ Tier 3 (an ADB-connected phone, a Mac) — never the same account as the worker.
 The worker running tests does not replace CI. Every PR the worker opens targets
 `main`, so every existing workflow runs on it on GitHub-hosted runners, plus
 `agent-guard.yml`. No workflow is weakened or removed for the worker's sake.
-The gaps found while mapping — no CI job for the whole Rust workspace, three
-guest-free self-test suites outside CI, no branch protection — are listed in
-[TEST-TIERS.md § Gaps](TEST-TIERS.md#gaps-found-while-mapping).
+The gaps found while mapping are listed in
+[TEST-TIERS.md § Gaps](TEST-TIERS.md#gaps-found-while-mapping). Two of them
+are closed by workflows added on 2026-10-04, both on GitHub-hosted runners,
+both without a path filter so that they can become required checks:
+
+| Workflow | Check name | Runs | Kind |
+| --- | --- | --- | --- |
+| [`rust-workspace.yml`](../../.github/workflows/rust-workspace.yml) | `rust-workspace` | `cargo test --locked --workspace --all-targets` | product tests |
+| [`harness-selftests.yml`](../../.github/workflows/harness-selftests.yml) | `harness-selftests` | every guest-free harness self-test suite | harness self-tests |
+
+They are kept apart on purpose: a red product test and a red harness self-test
+are different findings, and the second means a gate can no longer be believed.
 
 ## Phase D — CI self-repair (designed, not built)
 
@@ -280,10 +299,15 @@ product pass, and a gate is never weakened to get green.
 ## The canary
 
 Before any P0/P1 roadmap issue, one small, isolated, non-destructive issue
-proves the pipe end to end. Proposed: **"Add a self-test case to
-`evidence-whitespace-check.sh` for a CRLF line ending"** — or any change of the
-same size that touches one script, has an obvious test, and cannot affect a
-shipped binary. The owner opens it with the contract above.
+proves the pipe end to end. Approved by the owner on 2026-10-04 and opened as
+**[#34 — CANARY: reject CRLF in evidence-whitespace-check.sh](https://github.com/yurisismotto/pliwee/issues/34)**.
+
+It is a real defect, measured before the issue was opened: the guard exists to
+catch what `git diff --check` cannot see, `git diff --check` rejects a CR at the
+end of a line, and the guard passes it — including a trailing space hidden
+behind the CR. The existing `--selftest` has no CR fixture. It touches one
+script, has an obvious red-before-green test, and cannot affect a shipped
+binary.
 
 The canary passes when all of these are observed, not reported:
 
@@ -297,10 +321,61 @@ The canary passes when all of these are observed, not reported:
 | the PR author is the token's user — the owner's account or an integration actor; either is acceptable, commit authorship is what must be the owner's | `gh pr view <pr> --json author` |
 | test evidence in the PR matches a re-run | re-run the listed commands |
 | labels moved `agent:ready → agent:working → agent:review` | the issue's timeline |
+| the worker ran from the workflow, not by hand | a run of *Agent · issue worker* with event `issues` for the label |
+| the regression test was red before the fix and green after | the PR's Tests section, re-run |
+| `rust-workspace` and `harness-selftests` ran on the PR and passed | `gh pr checks <pr>` |
+| the PR is still a draft after CI is green, and nobody but the owner promoted it | `gh pr view <pr> --json isDraft`; the PR timeline |
 | nothing merged, auto-merge off | `gh pr view <pr> --json state,autoMergeRequest` |
+| nothing reached `main` but through a merged PR | `git log origin/main` unchanged by the run |
 | the token could not have done more | `gh api user` and the token's settings page: no Workflows/Administration |
 
+Anything short of every row is **PARTIAL** or **BLOCKED**, never PASS.
+
+### Preconditions the canary cannot run without
+
+Measured on 2026-10-04; each one alone stops the workflow from ever starting:
+
+1. **The worker is not on `main`.** GitHub runs a workflow for an `issues`
+   event only from the default branch, and `agent-issue-worker.yml` lives on
+   `feature/agent-issue-worker-infra`. Until the owner merges that branch, a
+   label applied to #34 starts nothing. The same is true of the guard rails:
+   the worker branches from `origin/main`, so before the merge its checkout
+   would have no `agent-guard.sh`, no hooks and no skill — and git runs no
+   hook from a missing `core.hooksPath`, silently. A hand run of Phase B before
+   the merge would therefore not be the worker either.
+2. **No runner labelled `pliwee-agent` is registered**
+   (`repos/yurisismotto/pliwee/actions/runners`: `total_count: 0`). Creating
+   its OS account needs `sudo`; registering it needs a token only the owner
+   can mint.
+3. **`PLIWEE_AGENT_WORKER` is not set** (`actions/variables`: empty), so the
+   job is skipped by design.
+4. **The runner account's credentials** — its git identity, its fine-grained
+   token and its Claude login — are the owner's to create
+   ([§ Self-hosted runner plan](#self-hosted-runner-plan)).
+
+None of these is something an agent may do for itself, and none is worked
+around.
+
 ## Activation
+
+### Order
+
+Each step is observed before the next one starts.
+
+1. **Server-side protection** — the `main` ruleset and fork-PR approval.
+   *Applied 2026-10-04.*
+2. **The owner opens a PR from `feature/agent-issue-worker-infra`.** Its CI is
+   the first observed run of `rust-workspace` and `harness-selftests`.
+3. **Required checks** — once both have reported on that PR, and passed, add
+   them to the ruleset ([§ Required checks](#required-checks)).
+4. **The owner merges the branch.** The worker, its guard rails and its skill
+   are now on `main`.
+5. **The runner** — account, identity, token, Claude login, registration,
+   `.env` ([§ Self-hosted runner plan](#self-hosted-runner-plan)).
+6. **The switch** — `PLIWEE_AGENT_WORKER=enabled` (below).
+7. **The canary** — the owner removes and re-applies `agent:ready` on #34
+   (the trigger is the `labeled` event, so a label already there starts
+   nothing).
 
 Phase A (this branch): nothing to activate. Labels already exist.
 
@@ -326,6 +401,60 @@ gh variable set PLIWEE_AGENT_MAX_TURNS --body 200 -R yurisismotto/pliwee
 gh variable set PLIWEE_AGENT_MAX_BUDGET_USD --body 25 -R yurisismotto/pliwee
 ```
 
+## Required checks
+
+A check enters the ruleset only after GitHub has published it under its real
+name on a pull request and it passed there. A required check that never
+reports blocks every PR, and every existing workflow is path-filtered — so
+none of them is required, and the two new ones run on every PR for exactly
+this reason.
+
+| Check | Workflow | State |
+| --- | --- | --- |
+| `rust-workspace` | `rust-workspace.yml` | **PENDING ACTIVATION AFTER FIRST OBSERVED CHECK** |
+| `harness-selftests` | `harness-selftests.yml` | **PENDING ACTIVATION AFTER FIRST OBSERVED CHECK** |
+
+Once both have passed on a PR, confirm the names, then add them. The ruleset
+id is `24443525`; `15368` is the GitHub Actions app, so a status of the same
+name from anywhere else does not satisfy the rule.
+
+```bash
+gh pr checks <pr> -R yurisismotto/pliwee        # both names listed, both pass
+gh api repos/yurisismotto/pliwee/rulesets/24443525 > ruleset.json
+jq '{name, target, enforcement, conditions, bypass_actors,
+     rules: (.rules + [{type: "required_status_checks", parameters: {
+       strict_required_status_checks_policy: false,
+       do_not_enforce_on_create: false,
+       required_status_checks: [
+         {context: "rust-workspace",    integration_id: 15368},
+         {context: "harness-selftests", integration_id: 15368}]}}])}' \
+   ruleset.json > ruleset-new.json
+gh api -X PUT repos/yurisismotto/pliwee/rulesets/24443525 --input ruleset-new.json
+gh api repos/yurisismotto/pliwee/rules/branches/main --jq '.[].type'   # now lists required_status_checks
+```
+
+A check is removed from the list only by the owner, with the reason written
+here. If a required check is renamed, add the new name, watch it pass, and only
+then remove the old one.
+
+## The merge boundary
+
+The ruleset stops a direct push, a force-push and a deletion of `main` for
+every actor. It does **not** stop a merge: it requires a pull request with
+**zero** approvals, because the owner is the only maintainer and GitHub does
+not let an author approve their own PR. The worker's fine-grained token
+belongs to the owner's account and carries *Contents: write*, which is enough
+to merge a green PR through the API. What stops the worker merging today is
+the deny rules, the absence of `gh api`/`gh pr merge` from its allow list, and
+the post-run check — not the server.
+
+Making it server-side means a separate actor for the worker: a machine
+account or GitHub App with *Write* role, its own token, then one required
+approval and a bypass for the repository-admin role in `pull_request` mode only
+(so the owner still merges their own PRs, and the worker never can). Commit
+authorship is unaffected — it comes from git, not from the token. That is an
+owner decision, not taken; until it is, this boundary is advisory.
+
 ## Rollback
 
 Fastest first; each is enough on its own to stop new work.
@@ -336,6 +465,18 @@ gh workflow disable "Agent · issue worker" -R yurisismotto/pliwee
 sudo systemctl stop 'actions.runner.yurisismotto-pliwee.*'     # no runner, nothing runs
 ```
 
+Server-side settings, if one of them has to come off:
+
+```bash
+gh api -X PUT repos/yurisismotto/pliwee/rulesets/24443525 --input ruleset.json   # the copy saved before adding checks
+gh api -X PUT repos/yurisismotto/pliwee/rulesets/24443525 -f enforcement=disabled # ruleset off, kept for re-enabling
+gh api -X PUT repos/yurisismotto/pliwee/actions/permissions/fork-pr-contributor-approval \
+   -f approval_policy=first_time_contributors                                    # the value before 2026-10-04
+```
+
+Disabling the ruleset removes the only server-side stop on a push to `main`;
+take the worker's switch off first.
+
 To stop a run in progress: `gh run cancel <run-id>`. To revoke everything:
 delete the runner in *Settings → Actions → Runners* and revoke the
 fine-grained token. A pushed branch or draft PR is inert until the owner acts
@@ -345,19 +486,75 @@ deleted with `gh label delete`.
 
 ## Owner decisions
 
-**Decided:** the git identity is `Yuri C. Sismotto <yuri.sismotto@hotmail.com>`
-(2026-10-04; [§ Git authorship](#decided-by-the-owner-2026-10-04)).
+### Decided
 
-Still open, and Phase B or C waits on them:
+| # | Decision | Date | Status |
+| --- | --- | --- | --- |
+| 0 | Git identity: `Yuri C. Sismotto <yuri.sismotto@hotmail.com>` ([§ Git authorship](#decided-by-the-owner-2026-10-04)) | 2026-10-04 | **DECIDED** |
+| 1 | Main ruleset | 2026-10-04 | **APPROVED** — applied |
+| 2 | Fork workflow approval | 2026-10-04 | **APPROVED** — applied; all outside collaborators; fork code is untrusted |
+| 3a | Full Rust workspace CI | 2026-10-04 | **APPROVED** — `rust-workspace.yml` |
+| 3b | Non-VM harness self-tests CI | 2026-10-04 | **APPROVED** — `harness-selftests.yml` |
+| 4 | Agent Draft → Ready | 2026-10-04 | **DEFERRED** — owner-only |
+| 5 | CRLF canary | 2026-10-04 | **APPROVED** — [#34](https://github.com/yurisismotto/pliwee/issues/34) |
 
-1. **A ruleset on `main`** — require a pull request and these status checks,
-   block force-push and deletion, no bypass for the worker's token. Without it
-   the hooks and token scopes are the only stop between the agent and `main`.
-   It also binds the owner, so it is the owner's call.
-2. **Fork-PR approval** set to "all outside collaborators".
-3. **CI additions** from [TEST-TIERS.md § Gaps](TEST-TIERS.md#gaps-found-while-mapping):
-   a whole-workspace Rust test job and the guest-free self-test suites, at the
-   CI time they cost.
-4. **Whether `agent:review` PRs ever leave draft** automatically. Today: never;
-   the owner marks them ready.
-5. **The canary issue** — the one proposed above, or another.
+**1. Main ruleset — APPROVED.** `main` takes changes through a pull request
+only; force-push and deletion are blocked; no actor has a bypass — not the
+worker, not Claude, not an integration. Auto-merge is not part of the flow and
+the agent never merges: `agent → branch → draft PR → CI → owner → merge`,
+never `agent → main`. Applied as ruleset `24443525`, read back from
+`repos/yurisismotto/pliwee/rules/branches/main`. Before: no ruleset, no branch
+protection. Required status checks follow [§ Required checks](#required-checks);
+what the ruleset does not stop is in [§ The merge boundary](#the-merge-boundary).
+
+**2. Fork workflow approval — APPROVED.** Workflows from every outside
+collaborator wait for the owner's approval (`all_external_contributors`;
+before: `first_time_contributors`). Approval is not trust: a fork PR is
+untrusted input whoever approved it to run. No workflow uses
+`pull_request_target`; every workflow a PR can start runs on a GitHub-hosted
+runner with a read-only token and no secret; the self-hosted runner is
+reachable only from `issues: labeled` by the owner. The review behind this is
+in [§ Fork pull requests](#fork-pull-requests).
+
+**3. New CI jobs — APPROVED.** `rust-workspace` (product tests) and
+`harness-selftests` (harness self-tests), on every PR, kept separate on
+purpose ([§ CI stays independent](#ci-stays-independent)).
+
+**4. Agent Draft → Ready — DEFERRED.** Every PR the worker opens stays a
+**draft**. The worker does not run `gh pr ready`, does not convert the draft,
+does not request a review in place of the owner's decision, does not merge and
+does not enable auto-merge — even when CI is green.
+
+```
+agent:ready → worker → draft PR → CI → agent:review → OWNER marks ready → OWNER decides the merge
+```
+
+The skill says so, the permission file denies `gh pr ready`, `gh pr merge`,
+`gh pr review` and `gh pr edit --add-reviewer`, and the workflow fails the run
+into `agent:failed` if the PR is not an open draft or has auto-merge on.
+Revisiting this is a new owner decision.
+
+**5. CRLF canary — APPROVED.** [#34](https://github.com/yurisismotto/pliwee/issues/34),
+[§ The canary](#the-canary).
+
+### Still open
+
+* **A separate actor for the worker**, so that the merge boundary is
+  server-side ([§ The merge boundary](#the-merge-boundary)).
+
+## Fork pull requests
+
+Reviewed 2026-10-04 over every workflow on this branch:
+
+| Question | Answer |
+| --- | --- |
+| Can a fork make a workflow run with a write token? | No. Every `pull_request` workflow declares `contents: read`; GitHub also downgrades a fork PR's token to read. The one job asking for more (`release-artifacts.yml` → `collect`: `id-token`, `attestations`) gets neither on a fork PR, so its attestation step fails closed there. |
+| Can a fork obtain a secret? | No. Secrets are not passed to fork PRs, and the only secret referenced anywhere (`RELEASE_SIGNING_KEY`) is read in `release-artifacts.yml`, whose signing step runs only when the key is present. |
+| Can a fork reach the self-hosted runner? | No. Only `agent-issue-worker.yml` targets it, on `issues: labeled`, and only when the owner applied `agent:ready`. No `pull_request`, `pull_request_target`, `issue_comment` or `workflow_run` workflow names it. |
+| Can a fork change a script run in a privileged context? | No privileged context exists for fork code: fork PRs run their own copy of every script, with nothing to take. The worker runs scripts from `main`, and now runs its guard from a copy taken before Claude starts. |
+| Is there a dangerous `pull_request_target`? | There is none. |
+| Artifact or cache poisoning? | No artifact crosses workflows (artifacts are uploaded and downloaded within one `release-artifacts.yml` run). The only cache is `setup-java`'s Gradle cache in `android-ci.yml`; GitHub scopes a PR's cache writes to the PR's ref, where `main` never reads them. The new jobs use no cache. |
+| Untrusted checkout before privileged code? | Not for forks. For the worker's own output it was the case — the verification step switched to the pushed branch and ran *that branch's* `agent-guard.sh`. Fixed: it runs the copy taken from `main`. |
+
+Residual risk: a fork PR still runs arbitrary code on a GitHub-hosted runner
+once approved. That is the runner's sandbox, and it holds nothing of ours.

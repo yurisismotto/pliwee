@@ -52,6 +52,7 @@
       "Bash(gh pr merge:*)",
       "Bash(gh pr ready:*)",
       "Bash(gh pr review:*)",
+      "Bash(gh pr edit --add-reviewer:*)",
       "Bash(gh pr close:*)",
       "Bash(gh issue close:*)",
       "Bash(gh issue delete:*)",

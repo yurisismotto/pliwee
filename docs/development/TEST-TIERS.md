@@ -7,7 +7,10 @@ not a pass; it is `NOT EXECUTED — <reason>`
 ([AGENTS.md § A PASS with no observed evidence is invalid](../../AGENTS.md#a-pass-with-no-observed-evidence-is-invalid)).
 
 Mapped on 2026-10-04 against `main` at `b17e525`. The macOS rows describe
-`feature/macos-desktop-v1`, which is not on `main` yet.
+`feature/macos-desktop-v1`, which is not on `main` yet. Updated the same day
+for the two CI jobs the owner approved (`rust-workspace.yml`,
+`harness-selftests.yml`); the run times below were measured on the owner's
+Fedora host with the suites running side by side, so they are upper bounds.
 
 ## The tiers
 
@@ -24,7 +27,7 @@ Mapped on 2026-10-04 against `main` at `b17e525`. The macOS rows describe
 | Rust format | `cd desktop && cargo fmt --all --check` | `desktop-quality.yml` | |
 | Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | `desktop-quality.yml` | stable toolchain, per `rust-toolchain.toml` |
 | Rust tests — portable and Linux-generic | `cargo test --locked -p pliwee-capability-{clipboard,files,battery} -p pliwee-core -p pliwee-control -p pliwee-proto` | `linux-distro-compat.yml`, on Ubuntu 24.04 / 26.04 / Debian 13 containers | four tests that need an unprivileged user are skipped there, by name, with a guard that fails if a fifth appears |
-| Rust tests — whole workspace | `cd desktop && cargo test --workspace` | **no** — see gaps | includes the hostile-client suite and end-to-end pairing over loopback TLS |
+| Rust tests — whole workspace | `cd desktop && cargo test --locked --workspace --all-targets` | `rust-workspace.yml` | includes the hostile-client suite and end-to-end pairing over loopback TLS. 1147 passed, 0 failed, 25 ignored, 215 s with the build, on the owner's host, and the same counts in a headless Ubuntu 24.04 container as a non-root user; the 25 are the real-session tests below, `#[ignore]` in the source. The workspace has no doctests (`--doc`: 0 in 11 crates) |
 | MSRV | `cargo check` on the declared `rust-version` | `linux-distro-compat.yml` | |
 | Distribution build | `cargo check -p pliwee-daemon/-cli/-gui` against each distro's own GTK | `linux-distro-compat.yml` | build compatibility only, not runtime |
 | Windows portable boundary | `cargo check`/`build`, `cargo test --no-run`, MSVC | `portable-windows-msvc.yml` | compiles; does not run Pliwee on Windows |
@@ -38,11 +41,11 @@ Mapped on 2026-10-04 against `main` at `b17e525`. The macOS rows describe
 | systemd unit | `systemd-analyze verify packaging/common/pliweed.service` | `packaging-checks.yml` | |
 | Dependency advisories | `cargo audit --deny warnings` | `security-audit.yml` | also scheduled |
 | Release artifact build | bundle, RPM, DEB, SBOM | `release-artifacts.yml` | builds; signing only with the key |
-| Agent guard rails | `./.github/agent/agent-guard.sh --selftest` | `agent-guard.yml` | added with this document |
-| Coordinator self-tests | `./packaging/tests/pre-g8-manual-gates-selftests.sh` | **no** | 229 passed, 0 failed on the owner's host; no guest needed |
-| Autopilot self-tests | `./packaging/tests/pre-g8-autopilot-selftests.sh` | **no** | no guest needed; did not finish within 10 minutes on the owner's host, so its run time is unmeasured |
-| G7-UP migration self-tests | `./packaging/tests/g7up-gui-migration-selftests.sh` | **no** | 120 passed, 0 failed on the owner's host; no VM |
-| Evidence whitespace | `./packaging/tests/evidence-whitespace-check.sh [PATH…]` | **no** | `--selftest`: 8 passed, 0 failed on the owner's host |
+| Agent guard rails | `./.github/agent/agent-guard.sh --selftest` | `agent-guard.yml`, `harness-selftests.yml` | 58 passed, 0 failed, 6 s |
+| Coordinator self-tests | `./packaging/tests/pre-g8-manual-gates-selftests.sh` | inside `harness-selftests.sh`, so `packaging-checks.yml` and `harness-selftests.yml` | 229 passed, 0 failed, 219 s; no guest needed. Listed as "not in CI" in the first version of this table — `harness-selftests.sh` already ran it |
+| Autopilot self-tests | `./packaging/tests/pre-g8-autopilot-selftests.sh` | **no** | 273 passed, 0 failed, 1580 s (26 min) on 2026-10-04; no guest needed. Too slow for a per-PR gate, and it runs the G7-UP suite again inside itself: run it by hand, or on a schedule if the owner wants one |
+| G7-UP migration self-tests | `./packaging/tests/g7up-gui-migration-selftests.sh` | `harness-selftests.yml` | 120 passed, 0 failed, 477 s; no VM |
+| Evidence whitespace | `./packaging/tests/evidence-whitespace-check.sh [PATH…]` | `--selftest` in `harness-selftests.yml` | `--selftest`: 8 passed, 0 failed. Passes a CR at the end of a line, which `git diff --check` rejects — canary [#34](https://github.com/yurisismotto/pliwee/issues/34) |
 | Whitespace in a diff | `git diff --check` | — | every change |
 
 ## Tier 2
@@ -73,7 +76,9 @@ Mapped on 2026-10-04 against `main` at `b17e525`. The macOS rows describe
 
 ## Gaps found while mapping
 
-1. **No CI job runs the whole Rust workspace's tests.** `pliwee-runtime`,
+1. **No CI job runs the whole Rust workspace's tests.** *Closed by
+   `rust-workspace.yml` (2026-10-04), once it has run: a check that has never
+   reported is not a closed gap.* `pliwee-runtime`,
    `pliwee-daemon`, `pliwee-cli`, `pliwee-gui`, `pliwee-linux` and
    `pliwee-capability-notifications` are tested only by a local
    `cargo test --workspace`. The worker runs that locally; nothing re-runs it in
@@ -82,11 +87,17 @@ Mapped on 2026-10-04 against `main` at `b17e525`. The macOS rows describe
 2. **Three guest-free self-test suites are not in CI** (the coordinator, the
    autopilot and the G7-UP migration self-tests). They need no VM. The
    autopilot suite's run time has to be measured before it joins a PR gate.
+   *2026-10-04: the coordinator suite was in CI all along, inside
+   `harness-selftests.sh`. G7-UP joins `harness-selftests.yml`. The autopilot
+   suite: measured at 26 minutes, so it stays out of the PR gate.*
 3. **`main` has no branch protection and no ruleset.** No check is required
-   before merge, and nothing on the server stops a push to `main`. See
+   before merge, and nothing on the server stops a push to `main`.
+   *2026-10-04: ruleset `24443525` applied — PR required, no force-push, no
+   deletion, no bypass. Required checks wait for their first observed run.* See
    [AGENT-WORKFLOW.md § Owner decisions](AGENT-WORKFLOW.md#owner-decisions).
 4. **No self-hosted runner is registered**, so no Tier 2 gate runs on a pull
    request.
 
-None of these is fixed here; each is a decision about CI time or repository
-settings that belongs to the owner.
+None of these was fixed when this was mapped; each was a decision about CI time
+or repository settings that belongs to the owner. The owner took them on
+2026-10-04 ([AGENT-WORKFLOW.md § Owner decisions](AGENT-WORKFLOW.md#owner-decisions)).

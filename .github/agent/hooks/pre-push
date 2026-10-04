@@ -5,7 +5,10 @@
 # on it that is not the owner's or carries AI attribution.
 # PLIWEE_AGENT_BASE is the branch the work started from (default origin/main).
 set -uo pipefail
-guard="$(git rev-parse --show-toplevel)/.github/agent/agent-guard.sh"
+# The guard next to this hook, not the one in the working tree: the issue
+# worker runs these hooks from a copy taken before it started, which an edit
+# in the checkout cannot reach.
+guard="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/agent-guard.sh"
 "$guard" identity >/dev/null || exit 1
 "$guard" push || exit 1
 "$guard" commits "${PLIWEE_AGENT_BASE:-origin/main}"

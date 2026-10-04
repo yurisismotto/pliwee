@@ -75,7 +75,7 @@ jobs:
           set -eu
           f=.github/agent/claude-settings.json
           jq -e . "$f" > /dev/null
-          for rule in 'Bash(gh pr merge:*)' 'Bash(gh pr ready:*)' 'Bash(git push --force:*)' \
+          for rule in 'Bash(gh pr merge:*)' 'Bash(gh pr ready:*)' 'Bash(gh pr edit --add-reviewer:*)' 'Bash(git push --force:*)' \
                       'Bash(git push --no-verify:*)' 'Bash(git commit --no-verify:*)' 'Bash(git config:*)' \
                       'Edit(.github/workflows/**)' 'Edit(AGENTS.md)'; do
               jq -e --arg r "$rule" '.permissions.deny | index($r) != null' "$f" > /dev/null \

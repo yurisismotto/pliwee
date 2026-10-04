@@ -105,8 +105,30 @@ jobs:
           gh issue comment "$ISSUE" -R "$PLIWEE_REPO" --body-file "$RUNNER_TEMP/identity.md" || true
           exit 1
 
+      # The guard rails the worker is held to are copied out of the checkout
+      # before Claude starts, from main as checked out above. The hooks and the
+      # verification below run that copy, so an edit to .github/agent/** in the
+      # working tree — or on the pushed branch — cannot change what judges it.
+      - name: Take a trusted copy of the guard rails
+        run: |
+          set -eu
+          t="$RUNNER_TEMP/trusted"
+          rm -rf "$t"; mkdir -p "$t/.github" "$t/packaging/tests/lib"
+          cp -a .github/agent "$t/.github/agent"
+          cp -a packaging/tests/lib/assert.sh "$t/packaging/tests/lib/assert.sh"
+          echo "GUARD=$t/.github/agent/agent-guard.sh" >> "$GITHUB_ENV"
+
+      # A hooksPath that does not exist makes git run no hook at all, silently.
+      # So the path is checked, not assumed.
       - name: Install the worker's git hooks in this checkout only
-        run: git config core.hooksPath .github/agent/hooks
+        run: |
+          set -eu
+          git config core.hooksPath "$RUNNER_TEMP/trusted/.github/agent/hooks"
+          for h in commit-msg pre-push; do
+              f="$(git config core.hooksPath)/$h"
+              [ -x "$f" ] || { echo "::error::$f is missing or not executable; git would skip it silently"; exit 1; }
+              echo "  ok    $f"
+          done
 
       - name: Dependency gate — the mechanical half
         id: gate
@@ -146,6 +168,7 @@ jobs:
       # account's own login, so the push triggers CI.
       - name: Work the issue — Claude Code, headless
         if: steps.gate.outputs.ready == 'true'
+        id: work
         run: |
           claude -p "/pliwee-issue-worker $ISSUE" \
               --settings .github/agent/claude-settings.json \
@@ -156,9 +179,29 @@ jobs:
           jq '{terminal_reason, num_turns, total_cost_usd, permission_denials: [.permission_denials[]?.tool_input.command]}' \
               "$RUNNER_TEMP/claude-result.json"
 
-      # Trust nothing the worker said about itself: measure what reached GitHub.
-      - name: Verify what was pushed
+      # The skill labels the issue agent:blocked itself when its judgement half
+      # of the dependency gate stops it (an ADR not accepted, a SPEC missing).
+      # That is an outcome, not a failure: no branch is expected.
+      - name: Did the worker stop on a blocker?
         if: steps.gate.outputs.ready == 'true'
+        id: worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          labels="$(gh issue view "$ISSUE" -R "$PLIWEE_REPO" --json labels --jq '[.labels[].name] | join(" ")')"
+          echo "labels now: $labels"
+          if [[ " $labels " == *" agent:blocked "* ]]; then
+              gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --remove-label agent:working
+              echo "blocked=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "blocked=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Trust nothing the worker said about itself: measure what reached GitHub,
+      # with the guard copied before the worker ran.
+      - name: Verify what was pushed
+        if: steps.gate.outputs.ready == 'true' && steps.worker.outputs.blocked == 'false'
         id: verify
         run: |
           set -eu
@@ -167,15 +210,20 @@ jobs:
           n="$(grep -c . <<<"$branch" || true)"
           [ "$n" = 1 ] || { echo "::error::expected exactly one origin/feature/issue-$ISSUE-* branch, found $n"; exit 1; }
           git switch -q -c "$branch" "origin/$branch"
-          ./.github/agent/agent-guard.sh branch "$ISSUE"
-          ./.github/agent/agent-guard.sh commits "$PLIWEE_AGENT_BASE"
-          pr="$(gh pr list -R "$PLIWEE_REPO" --head "$branch" --state all --json number,isDraft,state,body)"
+          "$GUARD" branch "$ISSUE"
+          "$GUARD" commits "$PLIWEE_AGENT_BASE"
+          "$GUARD" paths "$PLIWEE_AGENT_BASE"
+          pr="$(gh pr list -R "$PLIWEE_REPO" --head "$branch" --state all --json number,isDraft,state,body,autoMergeRequest,baseRefName)"
           jq -e 'length == 1' <<<"$pr" > /dev/null || { echo "::error::expected one PR for $branch: $pr"; exit 1; }
           jq -e '.[0].state == "OPEN" and .[0].isDraft == true' <<<"$pr" > /dev/null \
               || { echo "::error::the PR for $branch is not an open draft"; exit 1; }
-          jq -e --arg i "#$ISSUE" '.[0].body | contains("Implements " + $i)' <<<"$pr" > /dev/null \
+          jq -e '.[0].autoMergeRequest == null' <<<"$pr" > /dev/null \
+              || { echo "::error::auto-merge is enabled on the PR for $branch; the worker never enables it"; exit 1; }
+          jq -e '.[0].baseRefName == "main"' <<<"$pr" > /dev/null \
+              || { echo "::error::the PR for $branch does not target main"; exit 1; }
+          jq -e --arg n "$ISSUE" '.[0].body | test("Implements #" + $n + "([^0-9]|$)")' <<<"$pr" > /dev/null \
               || { echo "::error::the PR body does not say Implements #$ISSUE"; exit 1; }
-          echo "  ok    $branch: one open draft PR, commits by the owner, no attribution"
+          echo "  ok    $branch: one open draft PR to main, no auto-merge, commits by the owner, no attribution, no protected path"
 
       - name: Hand over to the owner
         if: steps.verify.outcome == 'success'
@@ -187,7 +235,26 @@ jobs:
         if: failure() && steps.identity.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
+          OUT_GATE: ${{ steps.gate.outcome }}
+          OUT_WORK: ${{ steps.work.outcome }}
+          OUT_VERIFY: ${{ steps.verify.outcome }}
         run: |
+          git fetch -q origin || true
+          branches="$(git for-each-ref --format='%(refname:strip=3) %(objectname:short)' "refs/remotes/origin/feature/issue-$ISSUE-*")"
+          {
+              echo "FAILED — the issue worker stopped. Nothing was merged, and the PR, if any, stays a draft."
+              echo
+              echo "| Step | Outcome |"
+              echo "| --- | --- |"
+              echo "| dependency gate | ${OUT_GATE:-not run} |"
+              echo "| Claude Code worker | ${OUT_WORK:-not run} |"
+              echo "| verification of what was pushed | ${OUT_VERIFY:-not run} |"
+              echo
+              echo "Branch and last commit: ${branches:-none pushed}"
+              echo
+              echo "Evidence — the failing step's log: $RUN_URL"
+              echo
+              echo "No automatic retry. Re-apply \`agent:ready\` once the cause is understood."
+          } > "$RUNNER_TEMP/failed.md"
           gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:failed --remove-label agent:working || true
-          gh issue comment "$ISSUE" -R "$PLIWEE_REPO" \
-              --body "The issue worker failed and stopped. Nothing was merged. Evidence: $RUN_URL" || true
+          gh issue comment "$ISSUE" -R "$PLIWEE_REPO" --body-file "$RUNNER_TEMP/failed.md" || true
