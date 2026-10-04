@@ -146,13 +146,16 @@ relevant ADRs, and act on what it finds. Fix, re-run §5, review again.
 ```bash
 ./.github/agent/agent-guard.sh identity
 git add <the files you changed>
-git commit -m "<type(scope): summary>" -m "<why>"
+./.github/agent/worker-commit.sh "<type(scope): summary>" "<why>"
 ./.github/agent/agent-guard.sh commits origin/main
 ./.github/agent/agent-guard.sh paths origin/main
 git diff --check origin/main...HEAD
 ```
 
 Then stop successfully.
+
+Do not invoke `git commit` directly. `worker-commit.sh` is the only commit
+entry point for the headless worker.
 
 Do not push. Do not create, edit, ready, review or merge a PR.
 The trusted GitHub Actions workflow independently validates the local commit,

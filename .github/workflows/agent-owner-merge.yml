@@ -1,0 +1,228 @@
+name: Agent · owner merge
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: read
+  statuses: read
+
+concurrency:
+  group: agent-owner-merge-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: >-
+      github.event.issue.pull_request != null &&
+      github.event.comment.body == '@pliwee merge' &&
+      github.event.sender.login == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.issue.number }}
+      OWNER: ${{ github.repository_owner }}
+      OWNER_NAME: Yuri C. Sismotto
+      OWNER_EMAIL: yuri.sismotto@hotmail.com
+
+    steps:
+      - name: Validate worker PR and capture approved SHA
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pr="$(gh api "repos/$REPO/pulls/$PR")"
+
+          [ "$(jq -r .state <<<"$pr")" = open ] || {
+            echo "::error::PR is not open"; exit 1;
+          }
+
+          [ "$(jq -r .draft <<<"$pr")" = true ] || {
+            echo "::error::PR is not a Draft"; exit 1;
+          }
+
+          [ "$(jq -r .base.ref <<<"$pr")" = main ] || {
+            echo "::error::PR does not target main"; exit 1;
+          }
+
+          [ "$(jq -r .head.repo.full_name <<<"$pr")" = "$REPO" ] || {
+            echo "::error::cross-repository PR refused"; exit 1;
+          }
+
+          [ "$(jq -r .user.login <<<"$pr")" = "$OWNER" ] || {
+            echo "::error::PR author is not repository owner"; exit 1;
+          }
+
+          branch="$(jq -r .head.ref <<<"$pr")"
+
+          [[ "$branch" =~ ^feature/issue-([1-9][0-9]*)-worker$ ]] || {
+            echo "::error::$branch is not a trusted worker branch"
+            exit 1
+          }
+
+          issue="${BASH_REMATCH[1]}"
+          sha="$(jq -r .head.sha <<<"$pr")"
+          body="$(jq -r '.body // ""' <<<"$pr")"
+
+          grep -Fqx "<!-- pliwee-agent-issue:$issue -->" <<<"$body" || {
+            echo "::error::trusted issue marker missing"
+            exit 1
+          }
+
+          grep -Eq "(^|[^0-9])Implements #$issue([^0-9]|$)" <<<"$body" || {
+            echo "::error::issue reference mismatch"
+            exit 1
+          }
+
+          issue_json="$(gh api "repos/$REPO/issues/$issue")"
+
+          [ "$(jq -r .state <<<"$issue_json")" = open ] || {
+            echo "::error::issue is not open"
+            exit 1
+          }
+
+          jq -e '[.labels[].name] | index("agent:review") != null' \
+            <<<"$issue_json" >/dev/null || {
+              echo "::error::issue is not agent:review"
+              exit 1
+          }
+
+          commits="$(
+            gh api --paginate "repos/$REPO/pulls/$PR/commits?per_page=100" |
+            jq -s 'add'
+          )"
+
+          jq -e \
+            --arg n "$OWNER_NAME" \
+            --arg e "$OWNER_EMAIL" '
+              length > 0 and
+              all(.[];
+                (.parents | length) == 1 and
+                .commit.author.name == $n and
+                .commit.author.email == $e and
+                .commit.committer.name == $n and
+                .commit.committer.email == $e
+              )
+            ' <<<"$commits" >/dev/null || {
+              echo "::error::invalid commit authorship/history"
+              exit 1
+          }
+
+          forbidden='^[[:space:]]*(co-authored-by|generated-by|assisted-by|ai-assisted-by|made-with)[[:space:]]*:|noreply@anthropic\.com|generated with \[?claude|🤖'
+          messages="$(jq -r '.[].commit.message' <<<"$commits")"
+
+          if grep -inE -- "$forbidden" <<<"$messages"; then
+            echo "::error::forbidden AI attribution in commit message"
+            exit 1
+          fi
+
+          files="$(
+            gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" |
+            jq -s 'add'
+          )"
+
+          [ "$(jq 'length' <<<"$files")" -gt 0 ] || {
+            echo "::error::PR changes no files"
+            exit 1
+          }
+
+          changed="$(
+            jq -r '.[] | .filename, (.previous_filename // empty)' <<<"$files" |
+            sed '/^$/d' |
+            sort -u
+          )"
+
+          protected='^(\.github/workflows/|\.github/agent/|\.github/actionlint\.yaml$|\.claude/skills/pliwee-issue-worker/|AGENTS\.md$|docs/(audits|certification|reports)/)'
+
+          if grep -Eq "$protected" <<<"$changed"; then
+            echo "::error::worker PR touches protected paths"
+            grep -E "$protected" <<<"$changed"
+            exit 1
+          fi
+
+          echo "issue=$issue" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for CI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for _ in $(seq 1 24); do
+            out="$(gh pr checks "$PR" -R "$REPO" 2>&1 || true)"
+            if ! grep -qi 'no checks reported' <<<"$out"; then
+              break
+            fi
+            sleep 5
+          done
+
+          out="$(gh pr checks "$PR" -R "$REPO" 2>&1 || true)"
+          if grep -qi 'no checks reported' <<<"$out"; then
+            echo "::error::no PR checks registered"
+            exit 1
+          fi
+
+          gh pr checks "$PR" -R "$REPO" --watch --fail-fast
+
+          checks="$(gh pr checks "$PR" -R "$REPO" --json name,bucket)"
+
+          for required in rust-workspace harness-selftests; do
+            jq -e --arg n "$required" '
+              any(.[]; .name == $n and .bucket == "pass")
+            ' <<<"$checks" >/dev/null || {
+              echo "::error::$required missing or not green"
+              exit 1
+            }
+          done
+
+      - name: Verify approved SHA and merge
+        shell: bash
+        env:
+          APPROVED_SHA: ${{ steps.preflight.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          current="$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)"
+
+          [ "$current" = "$APPROVED_SHA" ] || {
+            echo "::error::HEAD changed after owner approval"
+            exit 1
+          }
+
+          gh pr ready "$PR" -R "$REPO"
+
+          current="$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)"
+
+          [ "$current" = "$APPROVED_SHA" ] || {
+            echo "::error::HEAD changed during finalization"
+            exit 1
+          }
+
+          gh pr merge "$PR" -R "$REPO" \
+            --merge \
+            --delete-branch \
+            --match-head-commit "$APPROVED_SHA"
+
+          [ "$(gh api "repos/$REPO/pulls/$PR" --jq .merged)" = true ] || {
+            echo "::error::PR was not merged"
+            exit 1
+          }
+
+      - name: Close issue
+        shell: bash
+        env:
+          ISSUE: ${{ steps.preflight.outputs.issue }}
+        run: |
+          set -euo pipefail
+
+          gh issue edit "$ISSUE" -R "$REPO" --remove-label agent:review || true
+          gh issue close "$ISSUE" -R "$REPO" --reason completed
+
+          echo "PR #$PR merged; issue #$ISSUE closed"
