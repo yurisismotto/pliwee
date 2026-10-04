@@ -104,13 +104,59 @@ and not yet assigned to a milestone.
 | Per-device capability permissions on every device | [#7](https://github.com/yurisismotto/pliwee/issues/7) |
 | Device presence: online/offline, last seen, platform, capabilities, battery | [#8](https://github.com/yurisismotto/pliwee/issues/8) |
 
-### P1 — Core features
+### P1 — Remote control and automation
+
+The first functional evolution on top of the P0 foundation. Any trusted device
+can control what another trusted device makes available — with no hub, and
+without a separate integration per pair of platforms:
+
+```
+Controller device  ──  Pliwee capability  ──▶  Target device
+Galaxy S25         ──  media-control      ──▶  MacBook
+Galaxy Tab         ──  session-control    ──▶  Fedora
+```
+
+A device can be a controller, a target, both or neither, per capability. The
+target's platform adapter decides whether it can perform an action, and an
+action it cannot perform is shown as unavailable — never simulated through an
+unsafe mechanism.
+
+| Item | Issue |
+| --- | --- |
+| Remote control and automation between trusted devices (umbrella) | [#28](https://github.com/yurisismotto/pliwee/issues/28) |
+| Remote media control: play, pause, next, previous, seek where supported | [#29](https://github.com/yurisismotto/pliwee/issues/29) |
+| Remote volume control: up, down, mute; absolute only where safe | [#30](https://github.com/yurisismotto/pliwee/issues/30) |
+| Remote power and session actions: lock, sleep, logout, shutdown, restart | [#31](https://github.com/yurisismotto/pliwee/issues/31) |
+| Scheduled remote actions and power timers | [#32](https://github.com/yurisismotto/pliwee/issues/32) |
+| Event and completion-triggered automations: known trigger → known action | [#33](https://github.com/yurisismotto/pliwee/issues/33) |
+
+"Remote Control & Automation" is one product module, but **not one
+permission**. It is a family of capabilities separated by risk — `play/pause`
+is not `shutdown` — each granted per device and deny-by-default. The direction,
+with names, granularity and schemas still to be fixed by an ADR/SPEC:
+
+```
+Remote Control & Automation
+├── media-control.v1       reversible
+├── volume-control.v1      reversible
+├── session-control.v1     destructive: stricter grant and confirmation
+├── scheduled-actions.v1   an allowed action, later
+└── automation.v1          a known trigger, then a known action
+```
+
+Controller and target are roles inside each capability
+([ADR-0017](../adr/ADR-0017-capability-roles.md)): what a device can do right
+now, never authorization. Automations are not a scripting engine — no shell, no
+executable, no command or code supplied by a peer. Screen streaming, remote
+desktop and arbitrary keyboard/mouse control stay in V3 / Future.
+
+### P1 — Other core features
 
 | Item | Issue |
 | --- | --- |
 | Notifications sync to every eligible device (Android → desktops first) | [#9](https://github.com/yurisismotto/pliwee/issues/9) |
 | Android TV / Google TV as a Pliwee platform (umbrella) | [#10](https://github.com/yurisismotto/pliwee/issues/10) |
-| Android TV remote control | [#11](https://github.com/yurisismotto/pliwee/issues/11) |
+| Android TV remote control: TV navigation; playback and volume through #29 and #30 | [#11](https://github.com/yurisismotto/pliwee/issues/11) |
 | Android TV text input | [#12](https://github.com/yurisismotto/pliwee/issues/12) |
 | Android TV share / open | [#13](https://github.com/yurisismotto/pliwee/issues/13) |
 | Android TV device presence | [#14](https://github.com/yurisismotto/pliwee/issues/14) |
@@ -153,7 +199,9 @@ when an item has a research question worth tracking.
 * iOS / iPadOS ([feasibility research](../research/platform-expansion/11-IOS-IPADOS-FEASIBILITY.md))
 * Screen streaming
 * Audio routing
-* Remote desktop / remote control of a computer
+* Remote desktop, screen interaction and arbitrary keyboard/mouse control —
+  controlling known functions of a device (media, volume, power) is V2,
+  [#28](https://github.com/yurisismotto/pliwee/issues/28)
 * Folder synchronisation
 * Cloud storage
 * Backup
@@ -170,6 +218,17 @@ Multi-device mesh (#4)
  ├── Trust group / device identity (#6)
  ├── Device presence (#8)
  └── Per-device permissions (#7)
+          ↓
+Remote control and automation (#28) ── mesh (#4), negotiation (#5),
+ │                                      permissions (#7), presence (#8)
+ ├── Remote media control (#29)
+ ├── Remote volume control (#30)
+ ├── Power / session actions (#31)
+ ├── Scheduled actions (#32)           ── power / session actions (#31)
+ └── Event-triggered automations (#33) ── #31 + scheduled actions (#32)
+
+Android TV remote control (#11) ── TV navigation stays TV-specific;
+                                    playback and volume use #29 and #30
 
 Selective clipboard (#15)   ── mesh + capability negotiation
 Selective files (#16)       ── mesh + capability negotiation
@@ -198,6 +257,14 @@ The issues record the same relationships as GitHub sub-issues and
 | Pairwise or transitive trust in a group | Transitive trust lets one compromised member enrol devices everywhere | [#6](https://github.com/yurisismotto/pliwee/issues/6) |
 | Revocation propagation | Whether a member may revoke a device on the others' behalf | [#19](https://github.com/yurisismotto/pliwee/issues/19) |
 | Widening a grant without reconnecting | ADR-0008 makes widening wait for the next connection | [#5](https://github.com/yurisismotto/pliwee/issues/5) |
+| Remote-control capability boundaries, ids and roles (ADR) | One product module must not become one permission; controller/target roles apply ADR-0017 and are never authorization | [#28](https://github.com/yurisismotto/pliwee/issues/28) |
+| Authorization granularity, confirmation and lock-state policy (ADR) | Destructive actions need a stricter policy than reversible ones, and a target may have nobody at it | [#28](https://github.com/yurisismotto/pliwee/issues/28), [#31](https://github.com/yurisismotto/pliwee/issues/31) |
+| Command identity, idempotency, replay and expiry (ADR) | Transport replay protection is per connection, and ADR-0010 forbids timestamps as a security input, so "stale" needs its own definition | [#28](https://github.com/yurisismotto/pliwee/issues/28), [#31](https://github.com/yurisismotto/pliwee/issues/31) |
+| Ownership, persistence and clock of scheduled actions (ADR) | A timer that outlives its controller's connection is new persistent remote-originated state | [#32](https://github.com/yurisismotto/pliwee/issues/32) |
+| Trigger model (ADR) | A closed, versioned vocabulary of triggers and actions — not a scripting engine | [#33](https://github.com/yurisismotto/pliwee/issues/33) |
+| Android as a media target | Controlling other apps' media sessions needs notification-listener access, which ADR-0015 scoped to `notifications.v1` | [#28](https://github.com/yurisismotto/pliwee/issues/28), [#29](https://github.com/yurisismotto/pliwee/issues/29) |
+| Remote-control wire schemas, media-session, volume and session semantics, acknowledgement, runtime availability, platform adapters (SPEC) | What each platform can honestly do differs, and availability changes mid-session | [#29](https://github.com/yurisismotto/pliwee/issues/29)–[#31](https://github.com/yurisismotto/pliwee/issues/31) |
+| Remote-control threats ([threat model](../security/THREAT_MODEL.md)) | A stolen controller, a replayed shutdown, a timer acting after its grant was meant to end | [#28](https://github.com/yurisismotto/pliwee/issues/28) |
 | OTP filtering of notifications | The current design rules out Pliwee-side OTP detection ([NOTIFICATIONS.md](../architecture/NOTIFICATIONS.md)) | [#9](https://github.com/yurisismotto/pliwee/issues/9) |
 | TV remote-control mechanism | System-wide input needs privileges principle 8 forbids; what official APIs allow must be measured | [#11](https://github.com/yurisismotto/pliwee/issues/11) |
 | `share-open` URL safety | Incoming URLs are untrusted even from a trusted device | [#13](https://github.com/yurisismotto/pliwee/issues/13), [#17](https://github.com/yurisismotto/pliwee/issues/17) |
