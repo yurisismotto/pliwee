@@ -2,6 +2,8 @@
 
 **Status:** Accepted · 2026-08-29
 
+> **Amending note — 2026-10-04, owner acceptance of [ADR-0023](ADR-0023-pliwee-space-trust-model.md) ([#46](https://github.com/yurisismotto/pliwee/issues/46), branch `feature/issue-46-worker`), §Consequences and owner decision 5.** One rule is added to the capability architecture: **a capability MUST NOT re-emit peer-originated user data to another peer by default. Cross-peer relay is allowed only when an Accepted, capability-specific ADR and/or SPEC explicitly defines that relay, including user consent, authorization, provenance/source identity, destination selection, revocation, privacy/logging, and failure semantics.** Trust between devices does not imply data flow between them. The rule does not prohibit a future relay architecture such as [#27](https://github.com/yurisismotto/pliwee/issues/27); it makes relay an explicit, reviewed capability rather than an accidental property of multi-device connectivity. The tree has no relay path today; for `clipboard.v1` the absence of relay is enforced and tested (THREAT_MODEL T23, `CLIP-SEC-09`). Nothing else in this ADR changes. The original text below is left as it was decided.
+
 ## Context
 
 The roadmap is long: clipboard, files, notifications, media control, URL

@@ -1,12 +1,19 @@
 # ADR-0023 — Pliwee Space: pairwise trust for the multi-device group
 
-**Status:** Proposed · 2026-10-04
+**Status:** Accepted · 2026-10-04
 
-Proposed for [#43](https://github.com/yurisismotto/pliwee/issues/43), the
-trust-model decision that [#6](https://github.com/yurisismotto/pliwee/issues/6)
-requires. Not accepted. Nothing in this ADR may be implemented until the
-project owner accepts it. The open points the owner is asked to settle are in
-[§Questions for the owner](#questions-for-the-owner).
+Proposed 2026-10-04 for [#43](https://github.com/yurisismotto/pliwee/issues/43),
+the trust-model decision that
+[#6](https://github.com/yurisismotto/pliwee/issues/6) requires. Accepted by the
+project owner, Yuri C. Sismotto, on 2026-10-04
+([#46](https://github.com/yurisismotto/pliwee/issues/46)). The owner's answers
+to the five open questions are recorded in
+[§Owner decisions at acceptance](#owner-decisions-at-acceptance) and applied in
+the sections they concern.
+
+Accepted is not implemented. Acceptance unblocks the specification and
+implementation of #6. It does not implement #6, and #6 stays open. No code,
+wire format or stored state changes with this acceptance ([§Notes](#notes)).
 
 "Pliwee Space" is the working name #6 gives the group for architecture
 documents. Whether the UI uses it is not decided here.
@@ -27,11 +34,16 @@ documents. Whether the UI uses it is not decided here.
   mechanism exists in this iteration (§D1, §D8).
 * **Constrains**, without deciding, the future revocation work of
   [#19](https://github.com/yurisismotto/pliwee/issues/19) (§D7).
-* Leaves [ADR-0008](ADR-0008-capability-architecture.md) and
-  [ADR-0017](ADR-0017-capability-roles.md) unchanged. Capability grants stay
-  per peer.
+* **Amends** [ADR-0008](ADR-0008-capability-architecture.md) for one rule
+  only: a capability must not re-emit peer-originated user data to another
+  peer by default (owner decision 5, §Consequences). The rest of ADR-0008 is
+  unchanged.
+* Leaves [ADR-0017](ADR-0017-capability-roles.md) unchanged. Capability grants
+  stay per peer.
 
-No earlier ADR is superseded or amended, so none needs a note.
+No earlier ADR is superseded. The text of ADR-0008 is left as it was decided,
+and it carries an amending note dated 2026-10-04, the same way ADR-0022's
+amendments were recorded.
 
 ---
 
@@ -168,9 +180,12 @@ default, that a device belongs to one group until a use case justifies more.
 It does not satisfy that default. A device has exactly one Space, its own
 view. In the sense of §D2's "user's Space", the shared TV belongs to both
 Alice's group and Bob's. That is allowed because overlap needs no rule: no
-member's trust depends on the group (§Questions for the owner, 4). A future
-proposal for named or labelled Spaces would make them a local display grouping
-that cannot change trust. It would need its own ADR.
+member's trust depends on the group. The owner accepted this replacement at
+acceptance (owner decision 4): the shared TV may pair independently with
+devices that belong to different people, and that never makes those people's
+devices trust one another. Named or labelled groups, if any are ever added,
+are local display organization only and cannot change trust, unless a later
+ADR explicitly decides otherwise.
 
 **A newly paired device appears only to the device it paired with.** When D
 pairs with A:
@@ -211,18 +226,25 @@ that is visible on that member.
 
 **Views reported by other members are claims, not state.** #6 wants each
 device to list the group, and #19 wants to show where a device is still
-trusted. Both may eventually want to show what *other* members say they trust.
-This ADR does not define a mechanism for that (§Questions for the owner, 1).
-If one is ever specified, it is bound by this decision:
+trusted. Both may want to show what *other* members say they trust. At
+acceptance the owner decided that a future SPEC **may** define authenticated
+member-view reports for dashboards and revocation UX, as claims only (owner
+decision 1). This ADR defines no mechanism and no wire format for them. Any
+SPEC that does is bound by this decision:
 
-* a report is a claim by the reporting member, received only over that
-  member's authenticated session, and shown as that member's claim;
+* a report is a claim by the reporting member, received only from a peer this
+  device has already pinned, over that peer's authenticated session or an
+  equivalently authenticated mechanism that the SPEC defines, and shown as that
+  member's claim;
 * it names devices by fingerprint. A name or a device id in a report is
   display only;
-* it **never** creates, changes or removes a record in the receiving device's
-  trust store, never opens a pairing window, and never raises a pairing prompt
+* it is display and diagnostic information. It is **never** an input to trust
+  or authorization: it never creates, restores, revokes or otherwise changes a
+  record in the receiving device's trust store, never changes a grant, never
+  opens a pairing window, and never raises a trust or pairing prompt
   (ADR-0022 §D5);
-* a member that lies in a report can mislead a display, nothing more.
+* a lying or compromised reporter can mislead a display, nothing more. It can
+  never widen trust.
 
 ### D6 — Removing a device
 
@@ -240,25 +262,36 @@ when there are several. And "a later connection from D is refused" holds for
 inbound connections only once a device listens: today that is the desktop,
 and on Android it waits for ADR-0022 §D2's listener.
 
-**A device leaving by its own choice** revokes all its peers locally. The
-others still hold its pin until they revoke it. If the leaving device also
-destroys its identity key (on Android: reinstall, data reset or factory reset;
-on Linux: deleting the identity file, which a package reinstall leaves in
-place), those
-pins can no longer be satisfied by that device. On Android that is final,
-because the Keystore key was never exportable. On a Linux desktop the key is a
-software file (ADR-0006), so a copy or a backup of it outlives the
-destruction. Only revocation on the members closes that. A new key is a new
-device that must pair again (ADR-0006). Destroying the key is the right way to
-hand a device on, and the UI should offer it there.
+**Leaving and handing on are different operations** (owner decision 2).
+
+* **Leave.** A device leaving by its own choice revokes all its peers locally:
+  an ordinary local leave or revoke-all. It may keep its identity key: leaving
+  does not destroy the identity automatically. The others still hold its pin
+  until they revoke it.
+* **Handoff.** A handoff, an ownership transfer, a factory-style reset or an
+  explicit identity reset **must destroy the current identity key and generate
+  a fresh one** before the device is treated as a new owner's device or as a
+  new device. A new key is a new device that must pair again (ADR-0006).
+
+Once the identity key is destroyed (on Android: reinstall, data reset or
+factory reset; on Linux: deleting the identity file, which a package reinstall
+leaves in place), the members' pins can no longer be satisfied by that device.
+On Android that is final, because the Keystore key was never exportable. On a
+Linux desktop the key is a software file (ADR-0006), so a copy or a backup of
+it outlives the destruction: deleting the local key does not invalidate them.
+Only revocation on the members closes that, so a Linux handoff still needs
+remote revocation: the old key revoked on each member that trusts it, each one
+locally (§D7). The exact wording and flows of leave and handoff are
+implementation work for #6, not decided here.
 
 ### D7 — What this means for revocation propagation (#19)
 
 With pairwise trust, "revoke everywhere" means revoking on every member. A
 member that is offline learns about it when the person revokes on it. #19 owns
 the guided flow and the "where is it still trusted" view. Both are possible
-under this ADR, and the view relies on §D5's claims, if those are ever
-specified.
+under this ADR, and the view relies on §D5's claims, which a future SPEC may
+specify (owner decision 1). Such a view shows claims. It never revokes
+anything.
 
 This ADR **does not** introduce propagated revocation, meaning one member
 narrowing another member's trust by message, and it does not decide whether
@@ -435,10 +468,29 @@ signs.
   per device.
 * **Trust does not imply data flow.** Being in a Space gives no peer a path to
   another peer's data. Today that holds because no capability relays:
-  `clipboard.v1` enforces it (T23, `CLIP-SEC-09`). This ADR does not add a rule
-  to ADR-0008. It recommends that every capability proposed for a multi-device
-  group, and especially for a shared device, states whether it can re-emit one
-  peer's data to another (§Questions for the owner, 5).
+  `clipboard.v1` enforces it (T23, `CLIP-SEC-09`). At acceptance the owner made
+  it a rule of the capability architecture (owner decision 5), and this ADR
+  amends ADR-0008 for that rule only:
+
+  > A capability MUST NOT re-emit peer-originated user data to another peer by
+  > default. Cross-peer relay is allowed only when an Accepted,
+  > capability-specific ADR and/or SPEC explicitly defines that relay,
+  > including user consent, authorization, provenance/source identity,
+  > destination selection, revocation, privacy/logging, and failure semantics.
+
+  The rule does not prohibit a future relay architecture such as
+  [#27](https://github.com/yurisismotto/pliwee/issues/27). It makes relay an
+  explicit, reviewed capability instead of an accidental property of
+  multi-device connectivity.
+* **Shared devices start from least privilege.** A device may use its own
+  locally known platform or role, such as Android TV, to choose safer initial
+  capability grants (owner decision 3). The direction for shared devices is
+  least privilege and deny by default. A peer's self-claimed kind or role is
+  never an authorization input (ADR-0022 puts no device kind on the wire and
+  rejects roles fixed by device kind; ADR-0017 §6: a role is never an
+  authorization input), and pairing and trust are unchanged.
+  The concrete grant matrix belongs to the capability-permission work of
+  [#7](https://github.com/yurisismotto/pliwee/issues/7).
 * `docs/security/THREAT_MODEL.md` changes **with the implementation of #6**,
   not with this ADR, following ADR-0022's practice. The entries are listed
   below.
@@ -468,8 +520,8 @@ signs.
   Recovery is revocation on each member (§D6). Until that is done, exposure is
   per member and visible per member. #19 shortens it, and §D7 bounds how.
 * **Compromised member lying.** It can misreport its observed state, its name
-  (sanitized, T17) and, if §D5 reports are ever specified, its view of the
-  group. None of these is an input to trust.
+  (sanitized, T17) and, once a SPEC defines §D5 reports, its view of the
+  group. None of these is an input to trust or authorization.
 * **Shared device (Android TV).** A TV is used by everyone in the room (A5),
   and any of them can open its pairing window with the remote. Pairing their
   own phone with the TV gives them a relation with the TV only. It gives them
@@ -480,7 +532,9 @@ signs.
   the guest's own pairing and nothing else. Containment comes from trust being
   pairwise and from per-peer grants. What the TV shows, such as notifications
   mirrored to a screen everyone can see, is a capability and grant question,
-  not a trust one. Under transitive trust, a TV would amplify introductions.
+  not a trust one: the TV may start new pairings from safer, least-privilege
+  default grants because it knows locally that it is a TV (§Consequences,
+  owner decision 3). Under transitive trust, a TV would amplify introductions.
   Under pairwise trust, it cannot.
 * **Discovery and proximity.** Seeing a member's DNS-SD record, sharing its
   network, or using its name or device id confers nothing (T2, ADR-0005).
@@ -506,35 +560,66 @@ signs.
 
 ---
 
-## Questions for the owner
+## Owner decisions at acceptance
 
-These are the points this proposal leaves to the owner at acceptance. None of
-them changes §D1: trust stays pairwise either way.
+Decided by the project owner, Yuri C. Sismotto, on 2026-10-04
+([#46](https://github.com/yurisismotto/pliwee/issues/46)). These were the five
+questions the proposal left to the owner. The owner accepted the core model as
+proposed: trust stays pairwise (§D1); a Space is a per-device local view over
+unrevoked pairwise trust (§D2); there is no shared Space identity, group key,
+CA, authoritative member list, consensus, or implicit or transitive trust; a
+newly paired device is trusted only by the device it paired with (§D4);
+removal stays local revocation (§D6); and overlapping groupings are allowed
+because a Space is a local view, not a shared trust object (§D4). Each answer
+below is applied in the section it concerns.
 
-1. **Member-view reports.** Should a later SPEC let members exchange the claims
-   described in §D5, so a device can show what the other members say they
-   trust? #19's "where is it still trusted" view depends on this. Without it,
-   the person checks each device. This ADR fixes the constraints, not the
-   mechanism.
-2. **Leaving and handing on a device.** Should "leave the Space" offer to
-   destroy and regenerate the device's identity key (§D6), and should handing
-   a device on require it?
-3. **Shared-device defaults.** Should a device that knows locally that it is a
-   TV start new pairings with fewer default grants? Its own kind is local
-   knowledge. ADR-0022 forbids acting on a *peer's* claimed kind, and this
-   question does not.
-4. **One group per device.** #6 suggested that a device belongs to one group
-   until a use case justifies more. This ADR replaces that default (§D4): with
-   Spaces as per-device views, overlap needs no rule. Does the owner accept
-   the replacement?
-5. **Data flow across pairs.** Should "no capability re-emits one peer's data
-   to another" become a rule of the capability architecture, through an
-   amendment to ADR-0008? This ADR only recommends it (§Consequences).
+1. **Member-view reports — yes, as claims only** (§D5). A future SPEC may
+   define authenticated member-view reports so that dashboards and revocation
+   UX can show what another member says it trusts. Reports are received only
+   from an already pinned peer, over an authenticated session or an
+   equivalently authenticated mechanism that SPEC defines. They name devices
+   by fingerprint. They are display and diagnostic information, a claim made
+   by the reporting member. A report MUST NOT create, restore, revoke or
+   otherwise modify local trust, and MUST NOT open a pairing window or raise a
+   trust or pairing prompt. A lying or compromised reporter may mislead a
+   display, never widen trust. The wire format is not defined here.
+2. **Leave and handoff are distinct** (§D6). An ordinary local leave or
+   revoke-all may revoke peers while keeping the device's identity. A handoff,
+   ownership transfer, factory-style reset or explicit identity reset must
+   destroy the current identity and generate a fresh one before the device is
+   treated as a new owner's or a new device. Android's non-exportable Keystore
+   identity and Linux's software key stay explicit: on Linux, deleting the
+   local key does not invalidate copies or backups, and remote revocation is
+   still required. Exact UX wording and flows are implementation work.
+3. **Shared-device defaults — yes, safer local defaults** (§Consequences,
+   §Security implications). A device may use its own locally known platform
+   or role, such as Android TV, to choose safer initial capability grants.
+   Least privilege and deny by default are the architectural direction for
+   shared devices. A peer's self-claimed kind or role is never an
+   authorization input. Pairing and trust are unchanged. The concrete grant
+   matrix belongs to [#7](https://github.com/yurisismotto/pliwee/issues/7).
+4. **One group per device — the replacement is accepted** (§D4). #6's
+   suggested one-group-per-device default is replaced. A Space is a per-device
+   trust view, not a named shared object, so overlap needs no membership
+   mechanism. A shared TV may independently pair with devices that belong to
+   different people without making those people's devices trust one another.
+   Named or labelled groups, if any, are local display organization only,
+   unless a later ADR explicitly decides otherwise.
+5. **Cross-peer data flow — default deny becomes architectural policy**
+   (§Consequences). ADR-0008 is amended with the rule quoted in
+   §Consequences: no capability re-emits peer-originated user data to another
+   peer by default, and cross-peer relay is allowed only where an Accepted,
+   capability-specific ADR and/or SPEC explicitly defines it, including every
+   element the quoted rule lists. This does not prohibit a
+   future relay architecture such as
+   [#27](https://github.com/yurisismotto/pliwee/issues/27).
 
 ## Notes
 
 * Umbrella: #4. Part of #6, and required before #6 is implemented and before
   work that depends on the group or trust model: #7, #8, #18, #19 and #20.
+  Acceptance (#46) unblocks that work. It does not implement #6, which stays
+  open.
 * Implementing #6 under this ADR needs no protocol SPEC, because no wire
   change is made. It does need the UI and trust-store behaviour of §D2, §D3
   and §D6 specified for both platforms. Any member-view report (§D5) or
