@@ -16,7 +16,8 @@
 #   docs/development/AGENT-WORKFLOW.md; Phases A and B come first.)
 # * It needs a runner labelled `pliwee-agent`, and none is registered.
 # * AGENTS.md § Git Authorship Policy: commits use the owner's configured
-#   identity and carry no AI attribution. anthropics/claude-code-action@v1 sets
+#   identity — decided as Yuri C. Sismotto <yuri.sismotto@hotmail.com> — and
+#   carry no AI attribution. anthropics/claude-code-action@v1 sets
 #   `git config user.name/user.email` to its bot account in every mode, and its
 #   prompt asks for a Co-authored-by trailer — so that action is NOT used here.
 #   On the owner's host, git uses the identity the owner configured, the guard
@@ -77,9 +78,32 @@ jobs:
           persist-credentials: false
 
       # PLIWEE_OWNER_NAME / _EMAIL / _LOGIN come from the runner's own .env,
-      # written by the owner. The guard fails if any is missing.
-      - name: Identity — the owner's, or stop
-        run: ./.github/agent/agent-guard.sh identity
+      # written by the owner: Yuri C. Sismotto <yuri.sismotto@hotmail.com>
+      # (owner decision, 2026-10-04). The guard fails if any is missing.
+      # An environment that cannot commit as the owner does not commit at all:
+      # it reports BLOCKED, and nothing is repaired.
+      - name: Identity — the owner's, or BLOCKED
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          out="$(./.github/agent/agent-guard.sh identity 2>&1)"; rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -eq 0 ] && exit 0
+          {
+              echo "BLOCKED — this runner cannot commit as the repository owner, so the issue worker did not start."
+              echo
+              echo '```'
+              printf '%s\n' "$out"
+              echo '```'
+              echo
+              echo "Nothing was committed. The worker does not repair a git identity (AGENTS.md § Git Authorship Policy). Run: $RUN_URL"
+          } > "$RUNNER_TEMP/identity.md"
+          gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:blocked --remove-label agent:ready || true
+          gh issue comment "$ISSUE" -R "$PLIWEE_REPO" --body-file "$RUNNER_TEMP/identity.md" || true
+          exit 1
 
       - name: Install the worker's git hooks in this checkout only
         run: git config core.hooksPath .github/agent/hooks
@@ -160,7 +184,7 @@ jobs:
         run: gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:review --remove-label agent:working
 
       - name: Record the failure
-        if: failure()
+        if: failure() && steps.identity.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

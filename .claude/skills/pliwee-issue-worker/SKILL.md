@@ -44,9 +44,15 @@ authorship are not restated here and are not optional.
 ## 1. Read
 
 ```bash
-./.github/agent/agent-guard.sh identity          # stop at once if this fails
+./.github/agent/agent-guard.sh identity          # BLOCKED at once if this fails
 gh issue view $ARGUMENTS --comments
 ```
+
+The owner's identity is **`Yuri C. Sismotto <yuri.sismotto@hotmail.com>`**. If
+`agent-guard.sh identity` fails — here or before any commit — this environment
+cannot produce commits that follow AGENTS.md: **do not commit**, do not touch
+`git config`, label the issue `agent:blocked`, comment `BLOCKED —` with the
+guard's output, and stop.
 
 Then read, in this order: `AGENTS.md`; every issue linked from the issue's
 Dependencies and its "blocked by" list; every ADR and SPEC it names

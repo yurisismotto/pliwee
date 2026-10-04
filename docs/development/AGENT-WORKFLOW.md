@@ -23,7 +23,7 @@ owner applies  agent:ready            ← the only way work starts
     ↓
 self-hosted runner, owner's host
     ↓
-identity check ── not the owner's ──▶ STOP, agent:failed
+identity check ── not the owner's ──▶ BLOCKED: agent:blocked, no commit
     ↓
 mechanical gate ── blocked ──▶ agent:blocked + comment listing what is missing
     ↓
@@ -82,7 +82,24 @@ from GitHub's side.
 `Yuri Converso Sismotto`, while this repository's local config — and recent
 history — says `Yuri C. Sismotto`. A fresh clone, which is what a runner
 checkout is, would commit under the global name. The guard rejected exactly
-that in testing. Which spelling is canonical is an owner decision (below).
+that in testing.
+
+### Decided by the owner, 2026-10-04
+
+The expected owner identity is **`Yuri C. Sismotto <yuri.sismotto@hotmail.com>`**.
+Automated development preserves it:
+
+* an agent never replaces or overrides `user.name` / `user.email`;
+* the identity is verified before every commit (`agent-guard.sh identity`, the
+  `commit-msg` hook) and again on every push and on what reached GitHub;
+* no AI co-author or attribution trailer, no `Generated-By` / `Co-Authored-By`
+  agent metadata;
+* **if the execution environment cannot produce commits consistent with this,
+  the agent does not commit: it reports `BLOCKED`** — the issue is labelled
+  `agent:blocked` with a comment saying so;
+* the identity GitHub shows for pull-request and issue activity may be the
+  automation or integration actor; **commit authorship** follows AGENTS.md
+  regardless.
 
 ## Labels — the work queue
 
@@ -192,7 +209,8 @@ owner's review.
 1. Create an OS account on the Fedora host: `sudo useradd -m pliwee-agent`, no
    sudo group, no membership in `libvirt` or `plugdev`.
 2. As that account, configure git **as the owner decides**:
-   `git config --global user.name "<canonical name>"` and `user.email`. This is
+   `git config --global user.name "Yuri C. Sismotto"` and
+   `git config --global user.email yuri.sismotto@hotmail.com`. This is
    the owner configuring the owner's identity, not the agent.
 3. Install the build toolchains the Tier 1 gates need: Rust stable (rustup),
    JDK 17 and the Android SDK command-line tools, `jq`, `gh`, `shellcheck`, and
@@ -204,8 +222,8 @@ owner's review.
    as a systemd service under `pliwee-agent`.
 5. Write the runner's `.env` (next to `config.sh`):
    ```
-   PLIWEE_OWNER_NAME=<canonical name>
-   PLIWEE_OWNER_EMAIL=<canonical email>
+   PLIWEE_OWNER_NAME=Yuri C. Sismotto
+   PLIWEE_OWNER_EMAIL=yuri.sismotto@hotmail.com
    PLIWEE_OWNER_LOGIN=yurisismotto
    ```
 6. In *Settings → Actions → General*: require approval for workflows from
@@ -271,12 +289,12 @@ The canary passes when all of these are observed, not reported:
 
 | Check | How |
 | --- | --- |
-| git author and committer are the owner's configured identity | `git log --format='%an <%ae> / %cn <%ce>' origin/main..origin/feature/issue-N-*` |
+| git author and committer are `Yuri C. Sismotto <yuri.sismotto@hotmail.com>` | `git log --format='%an <%ae> / %cn <%ce>' origin/main..origin/feature/issue-N-*` |
 | no attribution trailer | `agent-guard.sh commits origin/main` on the pushed branch |
 | branch is `feature/issue-N-<slug>`, from `origin/main` | `git merge-base --is-ancestor origin/main <branch>` |
 | CI ran on the PR, on GitHub-hosted runners | `gh pr checks <pr>` lists the workflows |
 | the PR is a draft, says "Implements #N", has all sections | `gh pr view <pr> --json isDraft,body` |
-| the PR author is the owner's account (the token's user) | `gh pr view <pr> --json author` |
+| the PR author is the token's user — the owner's account or an integration actor; either is acceptable, commit authorship is what must be the owner's | `gh pr view <pr> --json author` |
 | test evidence in the PR matches a re-run | re-run the listed commands |
 | labels moved `agent:ready → agent:working → agent:review` | the issue's timeline |
 | nothing merged, auto-merge off | `gh pr view <pr> --json state,autoMergeRequest` |
@@ -290,7 +308,7 @@ Phase B, on the owner's host, inside a clean clone:
 
 ```bash
 git config core.hooksPath .github/agent/hooks
-export PLIWEE_OWNER_NAME="<canonical name>" PLIWEE_OWNER_EMAIL="<canonical email>" \
+export PLIWEE_OWNER_NAME="Yuri C. Sismotto" PLIWEE_OWNER_EMAIL="yuri.sismotto@hotmail.com" \
        PLIWEE_OWNER_LOGIN=yurisismotto PLIWEE_REPO=yurisismotto/pliwee
 ./.github/agent/agent-guard.sh identity
 gh issue edit <canary> --add-label agent:ready
@@ -327,19 +345,19 @@ deleted with `gh label delete`.
 
 ## Owner decisions
 
-These are open, and Phase B or C waits on them:
+**Decided:** the git identity is `Yuri C. Sismotto <yuri.sismotto@hotmail.com>`
+(2026-10-04; [§ Git authorship](#decided-by-the-owner-2026-10-04)).
 
-1. **The canonical git identity** — `Yuri C. Sismotto` (repository config, recent
-   history) or `Yuri Converso Sismotto` (global config), and the email. The
-   runner account is configured with it, and `PLIWEE_OWNER_*` repeats it.
-2. **A ruleset on `main`** — require a pull request and these status checks,
+Still open, and Phase B or C waits on them:
+
+1. **A ruleset on `main`** — require a pull request and these status checks,
    block force-push and deletion, no bypass for the worker's token. Without it
    the hooks and token scopes are the only stop between the agent and `main`.
    It also binds the owner, so it is the owner's call.
-3. **Fork-PR approval** set to "all outside collaborators".
-4. **CI additions** from [TEST-TIERS.md § Gaps](TEST-TIERS.md#gaps-found-while-mapping):
+2. **Fork-PR approval** set to "all outside collaborators".
+3. **CI additions** from [TEST-TIERS.md § Gaps](TEST-TIERS.md#gaps-found-while-mapping):
    a whole-workspace Rust test job and the guest-free self-test suites, at the
    CI time they cost.
-5. **Whether `agent:review` PRs ever leave draft** automatically. Today: never;
+4. **Whether `agent:review` PRs ever leave draft** automatically. Today: never;
    the owner marks them ready.
-6. **The canary issue** — the one proposed above, or another.
+5. **The canary issue** — the one proposed above, or another.
