@@ -75,6 +75,7 @@ def stop($why; $class): {action: "STOP", reason: $why, class: $class};
   | ($s.issues | map(select(has("agent:working")))) as $working
   | ($s.issues | map(select(has("agent:ready")))) as $ready
   | if $s.switch != "enabled" then stop("the kill switch PLIWEE_AGENT_NIGHT is \"\($s.switch)\""; "STOPPED")
+    elif ($s.identity // "") != "app" then stop("the execution identity is \"\($s.identity // "")\"; night mode runs only as the worker App"; "FAILED_INFRA")
     elif $s.sandbox != "required" then stop("PLIWEE_AGENT_SANDBOX is \"\($s.sandbox)\"; night mode runs only sandboxed"; "FAILED_INFRA")
     elif ($ss.start_main_sha | length) == 0 then stop("the session records no main SHA"; "FAILED_INFRA")
     elif $s.main_sha != $ss.start_main_sha then stop("main moved during the session: \($ss.start_main_sha) -> \($s.main_sha)"; "FAILED_INFRA")
@@ -187,7 +188,7 @@ cmd_derive_check() {
     case "$risk" in low|medium) ;; high) reasons+=("risk is high: not derived work") ;; *) reasons+=("risk must say low or medium") ;; esac
     dep="$(section_body "$f" "Dependencies" | grep -m1 -oiE 'depends on parent:[[:space:]]*(yes|no)' | grep -oiE '(yes|no)$' | tr 'A-Z' 'a-z')"
     [ -n "$dep" ] || reasons+=("Dependencies must say 'Depends on parent: yes' or 'no'")
-    section_body "$f" "Origin" | grep -qE '#[1-9][0-9]*' || reasons+=("Origin must reference the parent issue or PR")
+    grep -qE '#[1-9][0-9]*' <<<"$(section_body "$f" "Origin")" || reasons+=("Origin must reference the parent issue or PR")
     local hit; hit="$(grep -noiE -- "$DERIVED_FORBIDDEN" "$f" | head -3 | tr '\n' ' ')"
     [ -z "$hit" ] || reasons+=("touches governance, which is an owner decision: $hit")
     grep -q 'pliwee-derived' "$f" && reasons+=("carries a marker of its own; markers are written by the coordinator only")
@@ -275,7 +276,17 @@ need_live() {
 }
 need_env_coord() { local v; for v in "$@"; do [ -n "${!v:-}" ] || { fail "$v is not set"; return 1; }; done; }
 gh_bot()   { gh "$@"; }                       # GITHUB_TOKEN: writes as github-actions[bot], starts nothing
-gh_owner() { env -u GH_TOKEN gh "$@"; }       # the runner's login: the only call that starts a worker
+# The execution identity: the only call that starts a worker. With
+# PLIWEE_WORKER_IDENTITY=app it is the App's installation token and nothing
+# else — no fallback to the runner's own login.
+gh_exec() {
+    if [ "${PLIWEE_WORKER_IDENTITY:-}" = app ]; then
+        [ -n "${PLIWEE_EXEC_TOKEN:-}" ] || { fail "PLIWEE_WORKER_IDENTITY=app and no PLIWEE_EXEC_TOKEN"; return 1; }
+        GH_TOKEN="$PLIWEE_EXEC_TOKEN" gh "$@"
+    else
+        env -u GH_TOKEN gh "$@"
+    fi
+}
 
 marker_json() { # TEXT NAME — the JSON in <!-- NAME {...} -->
     grep -oE "<!-- $2 \{.*\} -->" <<<"$1" | head -1 | sed -E "s/^<!-- $2 //; s/ -->$//"
@@ -376,9 +387,9 @@ cmd_snapshot() {
     done < <(jq -c '.[] | select(.pull_request == null)' <<<"$issues")
 
     out="$(jq -cn --argjson now "$now" --arg owner "$PLIWEE_OWNER_LOGIN" --arg bot "$BOT" \
-        --arg sw "${PLIWEE_AGENT_NIGHT:-}" --arg sb "${PLIWEE_AGENT_SANDBOX:-}" --arg sha "$sha" \
+        --arg sw "${PLIWEE_AGENT_NIGHT:-}" --arg sb "${PLIWEE_AGENT_SANDBOX:-}" --arg sha "$sha" --arg id "${PLIWEE_WORKER_IDENTITY:-}" \
         --argjson sessions "$sessions" --argjson ledger "$ledger" --argjson issues "$enriched" '
-        {now:$now, owner:$owner, bot:$bot, switch:$sw, sandbox:$sb, main_sha:$sha,
+        {now:$now, owner:$owner, bot:$bot, switch:$sw, sandbox:$sb, identity:$id, main_sha:$sha,
          sessions:$sessions, ledger:$ledger, issues:$issues}')" || { fail "snapshot: could not assemble"; return 1; }
     printf '%s\n' "$out"
 }
@@ -409,7 +420,7 @@ cmd_tick() {
             # Ledger first: a promotion that is not counted could exceed a limit.
             ledger_write "$sess" "$(jq -c --argjson at "$now" '{event:"promote", issue:.issue, attempt:.attempt, at:$at}' <<<"$dec")" \
                 "**promote** #$issue — $reason" || { fail "tick: could not write the ledger; not promoting"; return 1; }
-            gh_owner issue edit "$issue" -R "$REPO_SLUG" --add-label agent:ready --remove-label agent:queued \
+            gh_exec issue edit "$issue" -R "$REPO_SLUG" --add-label agent:ready --remove-label agent:queued \
                 || { fail "tick: could not promote #$issue"; return 1; } ;;
         RECOVER)
             gh_bot issue edit "$issue" -R "$REPO_SLUG" --remove-label agent:working --add-label agent:queued || return 1
@@ -548,7 +559,7 @@ selftest() {
     # base STATE — a session open an hour, nothing done yet, main unchanged.
     base() {
         jq -cn --argjson now "$NOW" --argjson L "$L" '{
-          now:$now, owner:"owner", bot:"github-actions[bot]", switch:"enabled", sandbox:"required", main_sha:"m1",
+          now:$now, owner:"owner", bot:"github-actions[bot]", switch:"enabled", sandbox:"required", identity:"app", main_sha:"m1",
           sessions:[{number:100, author:"github-actions[bot]", start_main_sha:"m1", started_at:($now-3600), limits:$L}],
           ledger:[], issues:[]}'
     }
@@ -611,6 +622,8 @@ selftest() {
 
     printf '\n== limits and stop conditions ==\n'
     expect "STOPs on the kill switch"                        "$(jq -c '.switch="disabled"' <<<"$s1")" STOP "" "kill switch"
+    expect "STOPs when the execution identity is the owner's login, not the App" "$(jq -c '.identity="owner-login"' <<<"$s1")" STOP "" "only as the worker App"
+    expect "STOPs when the execution identity is unset"      "$(jq -c 'del(.identity)' <<<"$s1")" STOP "" "only as the worker App"
     expect "STOPs when the sandbox is not required"          "$(jq -c '.sandbox=""' <<<"$s1")" STOP "" "runs only sandboxed"
     expect "STOPs when main moved during the session"        "$(jq -c '.main_sha="m2"' <<<"$s1")" STOP "" "main moved"
     expect "STOPs when the session ran past its hours"       "$(jq -c '.sessions[0].started_at -= 40000' <<<"$s1")" STOP "" "ran past"
@@ -736,7 +749,7 @@ live_selftest() {
     local F="$T/gh" BIN="$T/bin"; mkdir -p "$F" "$BIN"
     cat > "$BIN/gh" <<'FAKE'
 #!/usr/bin/env bash
-F="$FAKE_GH_DIR"; who=owner; [ -n "${GH_TOKEN:-}" ] && who=bot; printf '%s\t%s\n' "$who" "$*" >> "$F/calls.log"
+F="$FAKE_GH_DIR"; case "${GH_TOKEN:-}" in "") who=runner-login ;; ghs_bot) who=bot ;; ghs_exec) who=app ;; *) who=other ;; esac; printf '%s\t%s\n' "$who" "$*" >> "$F/calls.log"
 [ -e "$F/down" ] && { echo "HTTP 503" >&2; exit 1; }
 jqx=""; args=(); while [ $# -gt 0 ]; do case "$1" in --jq) jqx="$2"; shift 2 ;; --paginate) shift ;; *) args+=("$1"); shift ;; esac; done
 set -- "${args[@]}"
@@ -764,27 +777,40 @@ FAKE
             {number:6, state:"open", user:{login:"stranger"}, labels:[{name:"agent:queued"}], body:"y"}]' > "$F/issues.json"
     run_tick() { : > "$F/calls.log"
         env PATH="$BIN:$PATH" FAKE_GH_DIR="$F" GH_TOKEN=ghs_bot PLIWEE_REPO=o/r PLIWEE_OWNER_LOGIN=owner \
-            PLIWEE_AGENT_NIGHT="${1:-enabled}" PLIWEE_AGENT_SANDBOX=required PLIWEE_REMOTE_URL="$T/remote.git" "$SELF" tick 2>&1; }
+            PLIWEE_AGENT_NIGHT="${1:-enabled}" PLIWEE_AGENT_SANDBOX=required PLIWEE_REMOTE_URL="$T/remote.git" \
+            PLIWEE_WORKER_IDENTITY="${2:-app}" PLIWEE_EXEC_TOKEN="${3-ghs_exec}" "$SELF" tick 2>&1; }
     local out calls
     out="$(run_tick)"; calls="$(cat "$F/calls.log")"
     if contains "$out" '"action":"PROMOTE","issue":5' \
-       && grep -qP '^owner\tissue edit 5 -R o/r --add-label agent:ready --remove-label agent:queued$' <<<"$calls" \
+       && grep -qP '^app\tissue edit 5 -R o/r --add-label agent:ready --remove-label agent:queued$' <<<"$calls" \
        && grep -qP '^bot\tissue comment 100 ' <<<"$calls"; then
-        ok "tick PROMOTEs #5 with the owner's login, after writing the ledger with the bot token"
+        ok "tick PROMOTEs #5 with the App's token, after writing the ledger with the bot token"
     else notok "tick did not promote as expected: $out | $calls"; fi
     local first_owner first_ledger
     first_ledger="$(grep -nP '^bot\tissue comment 100' <<<"$calls" | head -1 | cut -d: -f1)"
-    first_owner="$(grep -nP '^owner\t' <<<"$calls" | head -1 | cut -d: -f1)"
+    first_owner="$(grep -nP '^app\t' <<<"$calls" | head -1 | cut -d: -f1)"
     [ -n "$first_ledger" ] && [ -n "$first_owner" ] && [ "$first_ledger" -lt "$first_owner" ] \
         && ok "the promotion is ledgered before it is made (a crash cannot exceed a limit)" || notok "ledger order: $calls"
-    [ "$(grep -cP '^owner\t' <<<"$calls")" = 1 ] \
-        && ok "the owner's login is used for exactly one call: the promotion" || notok "owner login used for: $(grep -P '^owner' <<<"$calls")"
+    [ "$(grep -cP '^app\t' <<<"$calls")" = 1 ] && ! grep -qP '^(runner-login|other)\t' <<<"$calls" \
+        && ok "the App token is used for exactly one call, the promotion; the runner's own login for none" \
+        || notok "credentials used: $(cut -f1 <<<"$calls" | sort | uniq -c | tr '\n' ' ')"
     grep -q 'issue edit 6' <<<"$calls" && notok "a stranger's queued issue was touched" || ok "a stranger's queued issue is never promoted"
 
     out="$(run_tick disabled)"; calls="$(cat "$F/calls.log")"
-    if contains "$out" '"action":"STOP"' && grep -qP '^bot\tissue close 100' <<<"$calls" && ! grep -qP '^owner\t' <<<"$calls"; then
+    if contains "$out" '"action":"STOP"' && grep -qP '^bot\tissue close 100' <<<"$calls" && ! grep -qP '^(app|runner-login)\t' <<<"$calls"; then
         ok "the kill switch STOPs and closes the session, promoting nothing"
     else notok "kill switch: $out | $calls"; fi
+
+    out="$(run_tick enabled owner-login)"; calls="$(cat "$F/calls.log")"
+    if contains "$out" "only as the worker App" && ! grep -qP '^(app|runner-login)\t' <<<"$calls"; then
+        ok "legacy identity: tick STOPs the session and never promotes with the runner's login"
+    else notok "legacy identity tick: $out | $calls"; fi
+    jq -n --argjson at "$((now - 600))" --argjson L "$L" \
+        '[{number:100, user:{login:"github-actions[bot]"}, body:("<!-- pliwee-session " + ({start_main_sha:"m1", started_at:$at, limits:$L}|tojson) + " -->")}]' > "$F/sessions.json"
+    out="$(run_tick enabled app "")"; calls="$(cat "$F/calls.log")"
+    if contains "$out" "no PLIWEE_EXEC_TOKEN" && ! grep -qP '^(app|runner-login)\tissue edit' <<<"$calls"; then
+        ok "App mode with no App token: the promotion fails closed, no fallback to the runner's login"
+    else notok "App mode without token: $out | $calls"; fi
 
     touch "$F/down"; out="$(run_tick)"; local rc=$?; calls="$(cat "$F/calls.log")"
     if [ "$rc" -ne 0 ] && ! grep -qE 'issue (edit|comment|close)' <<<"$calls"; then

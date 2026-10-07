@@ -1,0 +1,52 @@
+# Agent — a worker PR leaves draft only by the owner's hand.
+#
+# Why this exists: the worker App needs `pull_requests: write` to open its
+# draft PR, and GitHub has no finer permission — the same grant lets it mark a
+# PR ready for review. No ruleset rule covers draft state. So this is a
+# compensating control, not a prevention: when anyone but the owner takes a
+# worker PR (`feature/issue-N-worker`) out of draft, it goes back to draft, and
+# the PR says who did it. Merging still needs the owner's code-owner approval
+# (ruleset), which is the boundary that cannot be crossed; this keeps Draft →
+# Ready an owner-only signal.
+#
+# `pull_request`, never `pull_request_target`: the workflow file comes from the
+# PR's own merge commit, and a worker branch cannot change a workflow — the App
+# has no `workflows` permission and agent-guard.sh refuses the path. A PR from
+# a fork runs with a read-only token and simply cannot revert anything.
+# GITHUB_TOKEN's own changes (agent-owner-merge.yml marking ready on the
+# owner's `@pliwee merge`) start no workflow, so that path is untouched.
+
+name: Agent · ready guard
+
+on:
+  pull_request:
+    types: [ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  guard:
+    if: >-
+      startsWith(github.head_ref, 'feature/issue-') &&
+      endsWith(github.head_ref, '-worker') &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.sender.login != github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_ID: ${{ github.event.pull_request.node_id }}
+      PR: ${{ github.event.pull_request.number }}
+      WHO: ${{ github.event.sender.login }}
+    steps:
+      - name: Back to draft
+        run: |
+          set -eu
+          # shellcheck disable=SC2016  # $id is a GraphQL variable, not a shell one
+          d="$(gh api graphql -f query='mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
+              -f id="$PR_ID" --jq '.data.convertPullRequestToDraft.pullRequest.isDraft')"
+          [ "$d" = true ] || { echo "::error::could not return #$PR to draft: '$d'"; exit 1; }
+          gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body "Returned to draft: \`$WHO\` marked this worker PR ready for review, and only the repository owner may. (AGENT-WORKFLOW.md § Execution identity.)"
+          echo "::warning::$WHO marked worker PR #$PR ready; reverted to draft"

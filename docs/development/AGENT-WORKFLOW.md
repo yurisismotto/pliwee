@@ -371,6 +371,7 @@ git runs in the work copy, and fires nowhere in the pipeline.
 | the model | inside `sandbox.sh` | edit the work copy, commit locally (as the owner's git identity, from `~/.gitconfig`), write the outbox | any GitHub API call, any push; it holds no credential |
 | `GITHUB_TOKEN` of the worker and session jobs | trusted steps | issues: write, contents: read, actions: read — labels, comments, ledger, the session issue | push, merge, start a workflow |
 | the runner account's gh login | trusted steps only | push the verified branch, open the draft PR, promote the next issue | — it **can** merge; see [§ The merge boundary](#the-merge-boundary) |
+| the `pliwee-worker` App (`PLIWEE_WORKER_IDENTITY=app`) | trusted steps only, short-lived tokens | the same three things, replacing the runner's login | merge, write `main`, other branches, tags, workflows, settings — [§ Execution identity](#execution-identity) |
 | the owner | GitHub | queue, review, `@pliwee merge`, decide | — |
 
 ### State machine
@@ -725,6 +726,143 @@ A check is removed from the list only by the owner, with the reason written
 here. If a required check is renamed, add the new name, watch it pass, and only
 then remove the old one.
 
+## Execution identity
+
+The owner and the autonomous worker are different identities. The model has
+no identity at all.
+
+| Identity | Who | Exclusively |
+| --- | --- | --- |
+| **owner** | `yurisismotto`, the repository's only admin | administration, rulesets, secrets, variables, governance workflows, architecture decisions, Ready for review, approval, merge, exceptional bypass |
+| **execution** | the **`pliwee-worker` GitHub App**, `pliwee-worker[bot]` | push `feature/issue-N-worker`, open and update its draft PRs, labels and comments, promote the next queued issue — with short-lived installation tokens minted by trusted steps |
+| **model** | Claude in `sandbox.sh` | nothing on GitHub: no credential reaches it |
+
+Status 2026-10-07: implemented on `feature/agent-night-autopilot`. **The App
+does not exist yet, and creating it is the owner's.** Until steps 1–8 below
+are done, `PLIWEE_WORKER_IDENTITY` is unset and the worker runs in legacy mode
+with the owner's login. The night session refuses that mode. The measured state
+is [AGENT-EXECUTION-IDENTITY-V1.md](../certification/security/AGENT-EXECUTION-IDENTITY-V1.md):
+**NOT CERTIFIED**.
+
+### The App's permissions
+
+From [`pliwee-worker-app.manifest.json`](../../.github/agent/identity/pliwee-worker-app.manifest.json).
+Each step mints a token down-scoped further: push + PR get contents and pull
+requests; promotion gets issues.
+
+| Permission | Level | Why required | Risk it carries | What contains it |
+| --- | --- | --- | --- | --- |
+| Metadata | read | mandatory for every App | none | — |
+| Contents | **write** | push `feature/issue-N-worker` | GitHub ties merging, tags, releases, branch deletion and the contents API to this one permission | `main` ruleset (PR + code-owner approval after the last push); agent-branch ruleset (only `feature/issue-*-worker` writable); worker-branch ruleset (fast-forward only); tag ruleset (owner only) |
+| Pull requests | **write** | open the draft PR | marking a PR ready; approving or closing other PRs; editing PRs | code-owner review, so the App's approval counts for nothing; `agent-ready-guard.yml` returns a worker PR to draft when anyone but the owner marks it ready; `agent-owner-merge.yml` requires the owner's approval on the head SHA |
+| Issues | **write** | labels, comments, promoting the next queued issue | labelling any issue `agent:ready` | the worker's gate requires an issue opened and last edited by the owner, or a valid derived one; an App edit makes the App the last editor, which the gate refuses |
+| Checks | read | wait for the PR's CI | none | — |
+| Actions | read | tell a live lock from a stale one | none (the logs are public) | — |
+
+**Not granted**, and proved by `identity-certify.sh`:
+
+* Administration — rulesets, protection, settings, collaborators;
+* Workflows — the server refuses any push that changes `.github/workflows/`;
+* Secrets, Variables, Environments;
+* Commit statuses and Checks: write — so the App cannot forge a required check;
+* Actions: write — so it cannot dispatch a workflow;
+* Deployments, Pages, Members, and everything else.
+
+There is no bypass for the App in any ruleset.
+
+### Which barrier stops what
+
+| Operation by the execution identity | Barrier | Layer |
+| --- | --- | --- |
+| merge any PR | `main` ruleset: one approval, `require_code_owner_review`, the owner the only code owner (`.github/CODEOWNERS`), `require_last_push_approval` | server |
+| push or write to `main` | `main` ruleset: pull request required, no bypass for the App | server |
+| push to any branch but `feature/issue-*-worker` (`release/*`, `security/*`, `develop`, `agent/*`, …) | agent-branch ruleset: creation, update and deletion for the admin role only | server |
+| force-push its own branch | worker-branch ruleset: non-fast-forward | server |
+| create a tag or a release, so the signed release workflow would run on its code | tag ruleset | server |
+| change a workflow | no `workflows` permission | server |
+| change rulesets, protection, secrets, variables, environments, settings | no administration permission | server |
+| forge `rust-workspace` / `harness-selftests` | required checks pinned to `integration_id 15368`; no statuses or checks write | server |
+| enable auto-merge | repository `allow_auto_merge: false` | server |
+| approve its own PR | GitHub refuses an author's approval | server |
+| mark its PR ready | `agent-ready-guard.yml` reverts it | compensating, after the fact |
+| touch governance paths at all | `agent-guard.sh paths` before the push; owner-merge preflight | trusted pipeline |
+| a branch name other than `feature/issue-N-worker` | `worker-pipeline.sh`, `agent-guard.sh branch`, the `pre-push` hook | trusted pipeline |
+| use the owner's login when the App token is missing | `PLIWEE_WORKER_IDENTITY=app`: `worker-pipeline.sh push` and `coordinator.sh gh_exec` refuse, and `credential.helper` is cleared | trusted pipeline |
+
+**Platform limits, stated plainly:**
+
+1. Once the owner approves a worker PR, the App could merge it. Approval *is*
+   the owner's merge authorization, and `require_last_push_approval` means
+   nothing pushed after it counts. Approve only what you are ready to merge.
+2. GitHub has no permission or rule that stops a holder of
+   `pull_requests: write` marking a PR ready; the guard workflow undoes it.
+3. The App's token exists in the runner's job memory while the job runs. The
+   model cannot reach it, because of the sandbox's PID namespace. The trusted
+   scripts can, by design.
+
+### Activation — the owner's steps
+
+Do them in this order. Each is observed before the next.
+
+1. **Create the App** from the manifest. Nothing is granted that is not in it:
+   ```bash
+   .github/agent/identity/app.sh form /tmp/pliwee-worker.html   # open it, confirm on GitHub
+   .github/agent/identity/app.sh convert <code from the redirect URL>
+   ```
+   The key goes to `~/.config/pliwee-worker-app/private-key.pem` (0600) and is
+   never printed. Note the client id and `pliwee-worker[bot]`.
+2. **Install it on this repository only:**
+   `https://github.com/apps/pliwee-worker/installations/new` → *Only select
+   repositories* → `pliwee`.
+3. **The environment** that holds the key, deployable from `main` only:
+   ```bash
+   gh api -X PUT repos/yurisismotto/pliwee/environments/agent-worker       --input - <<<'{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+   gh api -X POST repos/yurisismotto/pliwee/environments/agent-worker/deployment-branch-policies -f name=main -f type=branch
+   ```
+4. **The secret and the variables.** The key's value is read from the file and
+   never printed:
+   ```bash
+   gh secret set PLIWEE_WORKER_APP_PRIVATE_KEY --env agent-worker -R yurisismotto/pliwee < ~/.config/pliwee-worker-app/private-key.pem
+   gh variable set PLIWEE_WORKER_APP_CLIENT_ID --body '<client id>' -R yurisismotto/pliwee
+   gh variable set PLIWEE_WORKER_APP_BOT --body 'pliwee-worker[bot]' -R yurisismotto/pliwee
+   ```
+5. **Merge #53**, after review. The worker stays in legacy mode, now sandboxed.
+6. **Apply the rulesets.** Keep a copy of the current `main` ruleset first.
+   This must come after #53 merges: from here on, the owner's own PRs merge
+   through the admin bypass.
+   ```bash
+   d=.github/agent/identity/rulesets
+   gh api repos/yurisismotto/pliwee/rulesets/24443525 > main-ruleset-before.json
+   gh api -X PUT  repos/yurisismotto/pliwee/rulesets/24443525 --input $d/main.json
+   for f in agent-branches worker-branches tags certify-mirror; do
+     gh api -X POST repos/yurisismotto/pliwee/rulesets --input $d/$f.json
+   done
+   ```
+7. **Switch the worker to the App:**
+   `gh variable set PLIWEE_WORKER_IDENTITY --body app -R yurisismotto/pliwee`.
+8. **Take the owner's credential off the runner**, as `pliwee-agent`:
+   `sudo -iu pliwee-agent gh auth logout`, then
+   `sudo -iu pliwee-agent git config --global --unset-all credential.helper`.
+   Then revoke that fine-grained token in *Settings → Developer settings*.
+   From here on, App mode has nothing to fall back to.
+9. **Certify:**
+   ```bash
+   PLIWEE_APP_CLIENT_ID='<client id>' .github/agent/identity/app.sh token /tmp/pliwee-worker.token
+   CERT_APP_TOKEN_FILE=/tmp/pliwee-worker.token PLIWEE_WORKER_APP_BOT='pliwee-worker[bot]' \
+     .github/agent/identity/identity-certify.sh run
+   shred -u /tmp/pliwee-worker.token ~/.config/pliwee-worker-app/private-key.pem
+   ```
+   Every check must be PASS, none BLOCKED. It never touches `main`: merges go
+   to `certify/main`, which is deleted at the end.
+10. **Identity canary.** A small owner-authored issue, then `agent:ready`.
+    Expect a draft PR authored by `pliwee-worker[bot]`, commits authored by
+    the owner, CI green, `agent:review`, and no merge. Leave it for review.
+
+**Rollback:** `gh variable delete PLIWEE_WORKER_IDENTITY` returns the worker to
+legacy mode, but only while the runner still has a login (step 8 removes it).
+PUT `main-ruleset-before.json` and delete the four new rulesets to undo step 6.
+Uninstall the App to cut it off entirely.
+
 ## The merge boundary
 
 The ruleset stops a direct push, a force-push and a deletion of `main` for
@@ -751,6 +889,11 @@ What `feature/agent-night-autopilot` changes, and what it does not:
   merge, and they are protected paths. But a bug in them, or a change to them
   that the owner merges, would act with the owner's full repository rights.
   That residue is why night mode is **not** READY on this branch alone.
+
+**Superseded 2026-10-07:** the separation below was a recommendation. It is now
+implemented on `feature/agent-night-autopilot`; see
+[§ Execution identity](#execution-identity). It is not yet active. The original
+text stands for the record:
 
 **Recommended — not approved; an owner decision:** separate the execution
 identity from the owner/merge identity.
@@ -873,8 +1016,13 @@ Revisiting this is a new owner decision.
 * **Activate the night autopilot branch** — merge, labels, the canaries in
   [§ Night autopilot — activation](#activation-and-rollback). Recommended, not
   approved.
-* **The execution identity split** in [§ The merge boundary](#the-merge-boundary).
-  Recommended, not approved. Night mode is not READY without it.
+* **The execution identity split** — implemented, not active. It needs the
+  owner's steps in [§ Execution identity](#execution-identity). Night mode is
+  not READY without it.
+* **Required checks pinned to GitHub Actions** — *applied 2026-10-07 04:25Z*
+  to ruleset `24443525` (`integration_id 15368`, verified from the check runs
+  on `main`), after a fake status was measured satisfying the name-only rule
+  ([AGENT-EXECUTION-IDENTITY-V1.md § G8](../certification/security/AGENT-EXECUTION-IDENTITY-V1.md)).
 
 * **A separate actor for the worker**, so that the merge boundary is
   server-side ([§ The merge boundary](#the-merge-boundary)).

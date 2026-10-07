@@ -58,12 +58,14 @@ jobs:
       vars.PLIWEE_AGENT_WORKER == 'enabled' &&
       (github.event_name == 'schedule' || github.actor == github.repository_owner)
     runs-on: [self-hosted, linux, pliwee-agent]
+    environment: agent-worker
     timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
       PLIWEE_REPO: ${{ github.repository }}
       PLIWEE_AGENT_NIGHT: ${{ vars.PLIWEE_AGENT_NIGHT }}
       PLIWEE_AGENT_SANDBOX: required
+      PLIWEE_WORKER_IDENTITY: ${{ vars.PLIWEE_WORKER_IDENTITY }}
       PLIWEE_NIGHT_MAX_ISSUES: ${{ inputs.max_issues }}
       PLIWEE_NIGHT_MAX_HOURS: ${{ inputs.max_hours }}
       PLIWEE_NIGHT_MAX_DERIVED: ${{ inputs.max_derived }}
@@ -103,7 +105,20 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: '"$COORD" start'
 
+      # The coordinator stops any session not run as the App; this only gives
+      # it the App's token, scoped to issues, for the one promotion it may make.
+      - name: Mint the promotion token (GitHub App)
+        if: env.PLIWEE_WORKER_IDENTITY == 'app'
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PLIWEE_WORKER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PLIWEE_WORKER_APP_PRIVATE_KEY }}
+          permission-issues: write
+
       - name: Tick
+        env:
+          PLIWEE_EXEC_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           set -eu
           "$COORD" tick | tee "$RUNNER_TEMP/tick.txt"

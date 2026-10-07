@@ -41,11 +41,18 @@
 # * GITHUB_TOKEN (issues: write, contents: read, actions: read): labels,
 #   comments, the ledger. It cannot push or merge. Writes made with it start no
 #   workflow.
-# * The runner account's own gh login (a fine-grained token, no Workflows, no
-#   Administration): only the trusted push, the draft PR, and the coordinator's
-#   promotion of the next issue. Those steps run fixed scripts from main.
-#   Its capacity to merge is not removed here — see AGENT-WORKFLOW.md § The
-#   merge boundary.
+# * The execution identity — PLIWEE_WORKER_IDENTITY:
+#   - `app`: the pliwee-worker GitHub App. Short-lived installation tokens are
+#     minted right before the step that needs them, down-scoped per step
+#     (push + PR: contents and pull requests; promotion: issues), and revoked
+#     at the end of the job. The private key is a secret of the `agent-worker`
+#     environment, referenced only by the minting steps — never by the Claude
+#     step, which runs in its own PID namespace and could not read the runner's
+#     memory if it tried. With `app`, nothing falls back to the runner's own gh
+#     login: a missing token fails the step.
+#   - anything else (legacy): the runner account's own gh login — the owner's
+#     account, which can merge. The night session refuses to run in this mode.
+#   AGENT-WORKFLOW.md § Execution identity.
 
 name: Agent · issue worker
 
@@ -67,9 +74,11 @@ jobs:
     if: >-
       vars.PLIWEE_AGENT_WORKER == 'enabled' &&
       github.event.label.name == 'agent:ready' &&
-      github.event.sender.login == github.repository_owner &&
+      (github.event.sender.login == github.repository_owner ||
+       (vars.PLIWEE_WORKER_APP_BOT != '' && github.event.sender.login == vars.PLIWEE_WORKER_APP_BOT)) &&
       github.event.issue.pull_request == null
     runs-on: [self-hosted, linux, pliwee-agent]
+    environment: agent-worker
     timeout-minutes: 240
     env:
       ISSUE: ${{ github.event.issue.number }}
@@ -77,6 +86,8 @@ jobs:
       PLIWEE_AGENT_BASE: origin/main
       PLIWEE_AGENT_NIGHT: ${{ vars.PLIWEE_AGENT_NIGHT }}
       PLIWEE_AGENT_SANDBOX: required
+      PLIWEE_WORKER_IDENTITY: ${{ vars.PLIWEE_WORKER_IDENTITY || 'owner-login' }}
+      PLIWEE_WORKER_APP_BOT: ${{ vars.PLIWEE_WORKER_APP_BOT }}
       MAX_TURNS: ${{ vars.PLIWEE_AGENT_MAX_TURNS || '200' }}
       MAX_BUDGET_USD: ${{ vars.PLIWEE_AGENT_MAX_BUDGET_USD || '25' }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -268,15 +279,53 @@ jobs:
         if: steps.bundle.outputs.made == 'true' && steps.report.outputs.reported != 'blocked' && steps.report.outputs.reported != 'owner-decision'
         id: local_verify
         run: '"$PIPE" verify "$ISSUE" "${{ steps.prepare.outputs.base }}"'
-      - name: Push the verified branch
+      # Minted only now — after the model has exited and its work is verified —
+      # and scoped to what publication needs. Never in the environment of any
+      # step that runs model output.
+      - name: Mint the publisher token (GitHub App)
+        if: steps.local_verify.outcome == 'success' && env.PLIWEE_WORKER_IDENTITY == 'app'
+        id: app_pub
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PLIWEE_WORKER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PLIWEE_WORKER_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Execution identity — the App's, or nothing is published
         if: steps.local_verify.outcome == 'success'
+        id: exec
+        env:
+          APP_TOKEN: ${{ steps.app_pub.outputs.token }}
+          APP_SLUG: ${{ steps.app_pub.outputs.app-slug }}
+        run: |
+          set -eu
+          if [ "$PLIWEE_WORKER_IDENTITY" != app ]; then
+              echo "::warning::legacy identity: publishing with the runner's own gh login (the owner's account, which can merge). The night session refuses this mode."
+              echo "login=" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          [ -n "$APP_TOKEN" ] || { echo "::error::PLIWEE_WORKER_IDENTITY=app and no App token: refusing to fall back to any other credential"; exit 1; }
+          [ "${APP_SLUG}[bot]" = "$PLIWEE_WORKER_APP_BOT" ] \
+              || { echo "::error::the token belongs to '${APP_SLUG}[bot]', PLIWEE_WORKER_APP_BOT says '$PLIWEE_WORKER_APP_BOT'"; exit 1; }
+          repos="$(GH_TOKEN="$APP_TOKEN" gh api /installation/repositories --jq '[.repositories[].full_name] | join(",")')"
+          [ "$repos" = "$PLIWEE_REPO" ] || { echo "::error::the App's installation reaches '$repos', not exactly $PLIWEE_REPO"; exit 1; }
+          echo "  ok    publishing as $PLIWEE_WORKER_APP_BOT, installed on $PLIWEE_REPO only"
+          echo "login=$PLIWEE_WORKER_APP_BOT" >> "$GITHUB_OUTPUT"
+
+      - name: Push the verified branch
+        if: steps.exec.outcome == 'success'
         id: push
+        env:
+          PLIWEE_PUSH_TOKEN: ${{ steps.app_pub.outputs.token }}
         run: '"$PIPE" push "$ISSUE"'
       - name: Open Draft PR
         if: steps.push.outcome == 'success'
         id: publish
+        env:
+          APP_TOKEN: ${{ steps.app_pub.outputs.token }}
         run: |
           set -eu
+          if [ "$PLIWEE_WORKER_IDENTITY" = app ]; then export GH_TOKEN="$APP_TOKEN"; fi
           b="${{ steps.prepare.outputs.branch }}"
           title="$(jq -r .title "$RUNNER_TEMP/issue.json")"
           {
@@ -300,13 +349,20 @@ jobs:
       - name: Verify published handoff
         if: steps.publish.outcome == 'success'
         id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXEC_LOGIN: ${{ steps.exec.outputs.login }}
         run: |
           set -eu
           b="${{ steps.prepare.outputs.branch }}"
           git -C "$PUB" fetch -q origin "$b"
           [ "$(git -C "$PUB" rev-parse "refs/heads/$b")" = "$(git -C "$PUB" rev-parse "origin/$b")" ] \
               || { echo "::error::published branch differs from the verified HEAD"; exit 1; }
-          pr="$(gh pr list -R "$PLIWEE_REPO" --head "$b" --state all --json number,isDraft,state,body,autoMergeRequest,baseRefName)"
+          pr="$(gh pr list -R "$PLIWEE_REPO" --head "$b" --state all --json number,isDraft,state,body,autoMergeRequest,baseRefName,author)"
+          if [ -n "$EXEC_LOGIN" ]; then
+              jq -e --arg a "${EXEC_LOGIN%\[bot\]}" '.[0].author.login == $a or .[0].author.login == ("app/" + $a)' <<<"$pr" >/dev/null \
+                  || { echo "::error::the PR was not opened by the execution identity $EXEC_LOGIN: $(jq -r '.[0].author.login' <<<"$pr")"; exit 1; }
+          fi
           jq -e 'length == 1' <<<"$pr" >/dev/null || { echo "::error::expected exactly one PR for $b: $pr"; exit 1; }
           jq -e '.[0].state == "OPEN" and .[0].isDraft == true' <<<"$pr" >/dev/null || { echo "::error::PR is not an open Draft"; exit 1; }
           jq -e '.[0].autoMergeRequest == null' <<<"$pr" >/dev/null || { echo "::error::auto-merge is enabled"; exit 1; }
@@ -398,10 +454,20 @@ jobs:
       # Classify, ledger, and — in a night session — choose the next issue.
       # Runs whatever happened above once the gate was reached; the tick stops
       # the session on any fatal class, so a failure here never chains on.
+      - name: Mint the promotion token (GitHub App)
+        if: always() && env.PLIWEE_WORKER_IDENTITY == 'app' && steps.identity.outcome == 'success'
+        id: app_tick
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PLIWEE_WORKER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PLIWEE_WORKER_APP_PRIVATE_KEY }}
+          permission-issues: write
+
       - name: Record the result and continue the session
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
+          PLIWEE_EXEC_TOKEN: ${{ steps.app_tick.outputs.token }}
           OUT_IDENTITY: ${{ steps.identity.outcome }}
           OUT_GATE: ${{ steps.gate.outputs.result || 'error' }}
           OUT_WORK: ${{ steps.work.outcome }}

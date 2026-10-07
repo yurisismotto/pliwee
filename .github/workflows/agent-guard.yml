@@ -48,14 +48,14 @@ jobs:
 
       - name: Shell parses
         run: |
-          for f in .github/agent/agent-guard.sh .github/agent/worker-commit.sh .github/agent/coordinator.sh .github/agent/sandbox.sh .github/agent/worker-pipeline.sh .github/agent/hooks/*; do
+          for f in .github/agent/agent-guard.sh .github/agent/worker-commit.sh .github/agent/coordinator.sh .github/agent/sandbox.sh .github/agent/worker-pipeline.sh .github/agent/identity/*.sh .github/agent/hooks/*; do
               bash -n "$f" && printf '  ok    %s parses\n' "$f"
           done
 
       - name: Shellcheck
         run: |
           shellcheck --version
-          shellcheck -S warning .github/agent/agent-guard.sh .github/agent/worker-commit.sh .github/agent/coordinator.sh .github/agent/sandbox.sh .github/agent/worker-pipeline.sh .github/agent/hooks/*
+          shellcheck -S warning .github/agent/agent-guard.sh .github/agent/worker-commit.sh .github/agent/coordinator.sh .github/agent/sandbox.sh .github/agent/worker-pipeline.sh .github/agent/identity/*.sh .github/agent/hooks/*
 
       - name: The hooks are executable and call the guard
         run: |

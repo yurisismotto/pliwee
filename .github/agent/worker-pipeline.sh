@@ -73,10 +73,23 @@ cmd_verify() {
     printf 'ok    %s verified from the bundle, in a clean clone\n' "$b"
 }
 
+# push ISSUE — with PLIWEE_WORKER_IDENTITY=app, only with PLIWEE_PUSH_TOKEN (the
+# App's installation token), sent as an HTTP header through GIT_CONFIG_* so it
+# is in no command line, and with every credential helper disabled, so a
+# missing or rejected token can never fall back to the runner's own login.
 cmd_push() {
     num "$1" || return 1; dirs PUB || return 1
     local b="feature/issue-$1-worker" l r
-    PLIWEE_AGENT_BASE=origin/main git -C "$PUB" push -q -u origin "refs/heads/$b:refs/heads/$b" || { fail "push refused"; return 1; }
+    local -a auth=()
+    if [ "${PLIWEE_WORKER_IDENTITY:-}" = app ]; then
+        [ -n "${PLIWEE_PUSH_TOKEN:-}" ] || { fail "PLIWEE_WORKER_IDENTITY=app and no PLIWEE_PUSH_TOKEN: nothing else may push"; return 1; }
+        auth=(env GIT_CONFIG_COUNT=2
+              GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
+              GIT_CONFIG_KEY_1=http.extraHeader
+              GIT_CONFIG_VALUE_1="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$PLIWEE_PUSH_TOKEN" | base64 -w0)"
+              GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false SSH_ASKPASS=/bin/false)
+    fi
+    "${auth[@]}" env PLIWEE_AGENT_BASE=origin/main git -C "$PUB" push -q -u origin "refs/heads/$b:refs/heads/$b" || { fail "push refused"; return 1; }
     l="$(git -C "$PUB" rev-parse "refs/heads/$b")"
     r="$(git ls-remote --heads "$(remote)" "refs/heads/$b" | awk '{print $1}')"
     if [ -z "$r" ] || [ "$l" != "$r" ]; then fail "the remote branch is not the verified HEAD"; return 1; fi
@@ -142,7 +155,8 @@ selftest() {
     printf '\n== the good case ==\n'
     run_case $((n+=1)) "ACCEPTS: a worker that commits as the owner is verified and published" published \
         "echo two >> src/file.txt; $commit"
-    git --git-dir="$T/remote.git" log -1 --format='%an <%ae>|%s' "refs/heads/feature/issue-$n-worker" | grep -q '^Owner Name <owner@example.org>|fix: change the file$' \
+    local pub; pub="$(git --git-dir="$T/remote.git" log -1 --format='%an <%ae>|%s' "refs/heads/feature/issue-$n-worker")"
+    [ "$pub" = 'Owner Name <owner@example.org>|fix: change the file' ] \
         && ok "the published commit is the owner's, with the worker's message" || notok "the published commit is not what the worker made"
     run_case "$n" "REJECTS: a second run for the same issue never rewrites a published branch" refused "echo three >> src/file.txt; $commit" "already exists on the remote"
 
@@ -169,6 +183,52 @@ selftest() {
         && ok "precondition: the hostile bundle really carries two refs" || notok "precondition: the hostile bundle carries one ref"
     out="$("$SELF" verify "$n" "$base" 2>&1)"
     contains "$out" "not exactly refs/heads/feature/issue-$n-worker" && ok "REJECTS: a bundle carrying more than the issue branch" || notok "a two-ref bundle verified: $out"
+
+    printf '\n== execution identity ==\n'
+    n=$((n + 1)); base="$("$SELF" prepare "$n" 2>&1 | tail -1)"
+    "$SB" run --work "$WORK" --outbox "$OUTBOX" -- bash -c "echo id >> src/file.txt; $commit" >/dev/null 2>&1
+    "$SELF" bundle "$n" >/dev/null 2>&1; "$SELF" verify "$n" "$base" >/dev/null 2>&1
+    out="$(PLIWEE_WORKER_IDENTITY=app "$SELF" push "$n" 2>&1)"
+    if contains "$out" "no PLIWEE_PUSH_TOKEN" && ! git ls-remote --exit-code --heads "$PLIWEE_REMOTE_URL" "refs/heads/feature/issue-$n-worker" >/dev/null 2>&1; then
+        ok "REJECTS an App-mode push with no App token — no fallback to another credential"
+    else notok "App mode without a token: $out"; fi
+    # Over HTTP, where git does ask credential helpers. A local server answers
+    # 401 to everything and records the Authorization header it was sent; a
+    # helper records being asked. Legacy mode must ask it (so the test can see
+    # a fallback); App mode must not, and must send exactly the App token.
+    if need_tool python3 >/dev/null 2>&1; then
+        cat > "$T/srv.py" <<'PY'
+import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        with open(sys.argv[2], "a") as f: f.write((self.headers.get("Authorization") or "-") + "\n")
+        self.send_response(401); self.send_header("WWW-Authenticate", 'Basic realm="t"'); self.end_headers()
+    do_POST = do_GET
+    def log_message(self, *a): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H); open(sys.argv[1], "w").write(str(s.server_port)); s.serve_forever()
+PY
+        python3 "$T/srv.py" "$T/port" "$T/auth.log" & local spid=$!
+        local tries=0; while [ ! -s "$T/port" ] && [ "$tries" -lt 50 ]; do sleep 0.1; tries=$((tries + 1)); done
+        local url; url="http://127.0.0.1:$(cat "$T/port")/r.git"
+        printf '#!/bin/sh\ntouch %s/helper-asked\necho username=owner; echo password=owner-pat\n' "$T" > "$T/helper"; chmod +x "$T/helper"
+        git config --global credential.helper "$T/helper"
+        git -C "$PUB" remote set-url origin "$url"
+        PLIWEE_REMOTE_URL="$url" "$SELF" push "$n" >/dev/null 2>&1
+        [ -e "$T/helper-asked" ] && ok "precondition: over HTTP a legacy push does consult the runner's credential helper" \
+            || notok "precondition: the helper was never asked even in legacy mode; the next case would prove nothing"
+        rm -f "$T/helper-asked"; : > "$T/auth.log"
+        out="$(PLIWEE_REMOTE_URL="$url" PLIWEE_WORKER_IDENTITY=app PLIWEE_PUSH_TOKEN=ghs_selftest "$SELF" push "$n" 2>&1)"
+        local want; want="basic $(printf 'x-access-token:ghs_selftest' | base64 -w0)"   # the form actions/checkout sends
+        if [ ! -e "$T/helper-asked" ] && grep -qxF "$want" "$T/auth.log" && ! grep -qv -xF "$want" "$T/auth.log"; then
+            ok "App mode sends only the App token and never consults the runner's credential helper"
+        else notok "App mode over HTTP: helper-asked=$([ -e "$T/helper-asked" ] && echo yes || echo no) headers=$(sort -u "$T/auth.log" | tr '\n' ' ')"; fi
+        git config --global --unset credential.helper
+        git -C "$PUB" remote set-url origin "$PLIWEE_REMOTE_URL"
+        kill "$spid" 2>/dev/null; wait "$spid" 2>/dev/null
+    else notok "python3 is needed for the HTTP credential cases"; fi
+    out="$(PLIWEE_WORKER_IDENTITY=app PLIWEE_PUSH_TOKEN=ghs_selftest_secret_value "$SB" run --work "$WORK" --outbox "$OUTBOX" -- bash -c 'env; echo RAN' 2>&1)"
+    contains "$out" RAN && ! contains "$out" ghs_selftest_secret_value \
+        && ok "the App token never crosses into the sandbox, even when set around it" || notok "the push token reached the sandbox: $out"
 
     printf '\n== code the worker plants for the trusted steps ==\n'
     run_case $((n+=1)) "a core.fsmonitor planted in the work copy never runs outside the sandbox" published \

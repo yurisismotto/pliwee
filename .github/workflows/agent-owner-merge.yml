@@ -28,6 +28,7 @@ jobs:
       REPO: ${{ github.repository }}
       PR: ${{ github.event.issue.number }}
       OWNER: ${{ github.repository_owner }}
+      WORKER_APP_BOT: ${{ vars.PLIWEE_WORKER_APP_BOT }}
       OWNER_NAME: Yuri C. Sismotto
       OWNER_EMAIL: yuri.sismotto@hotmail.com
 
@@ -56,9 +57,22 @@ jobs:
             echo "::error::cross-repository PR refused"; exit 1;
           }
 
-          [ "$(jq -r .user.login <<<"$pr")" = "$OWNER" ] || {
-            echo "::error::PR author is not repository owner"; exit 1;
-          }
+          # A worker PR is opened by the execution identity: the worker App,
+          # or — legacy — the owner's own login. Nobody else's PR is finalized here.
+          author="$(jq -r .user.login <<<"$pr")"
+          if [ -n "$WORKER_APP_BOT" ] && [ "$author" = "$WORKER_APP_BOT" ]; then
+            # The App can never approve its own PR, and the ruleset's code-owner
+            # review makes the owner's approval the one that counts. Required on
+            # the exact head SHA, so a push after approval voids it.
+            gh api --paginate "repos/$REPO/pulls/$PR/reviews?per_page=100" | jq -s -e \
+              --arg o "$OWNER" --arg sha "$(jq -r .head.sha <<<"$pr")" '
+                add // [] | map(select(.user.login == $o)) | last
+                | . != null and .state == "APPROVED" and .commit_id == $sha' >/dev/null || {
+              echo "::error::a worker App PR needs the owner's approving review on its current head"; exit 1;
+            }
+          elif [ "$author" != "$OWNER" ]; then
+            echo "::error::PR author '$author' is neither the owner nor the worker App"; exit 1
+          fi
 
           branch="$(jq -r .head.ref <<<"$pr")"
 
