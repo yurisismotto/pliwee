@@ -56,11 +56,15 @@ on:
     branches: [main, develop]
     paths:
       - 'android/**'
+      - 'docs/policy/**'
+      - 'docs/privacy/**'
       - '.github/workflows/android-ci.yml'
   push:
     branches: [main, develop]
     paths:
       - 'android/**'
+      - 'docs/policy/**'
+      - 'docs/privacy/**'
       - '.github/workflows/android-ci.yml'
   workflow_dispatch:
 
@@ -172,6 +176,14 @@ jobs:
       # needs no Android runtime at all.
       - name: assembleDebugAndroidTest · instrumented sources still compile
         run: ./gradlew --no-daemon --max-workers=2 :app:assembleDebugAndroidTest
+
+      # The privacy policy's URL is compiled into the app, and the page it
+      # names is rendered from docs/policy/PRIVACY-POLICY.md. A stale page is
+      # a second policy; PrivacyPolicyTest compares the words, this compares
+      # the bytes the renderer would write.
+      - name: Privacy policy page is rendered from its source
+        working-directory: .
+        run: python3 docs/policy/render-privacy-page.py --check
 
       # ------------------------------------------------------------------ 2 --
       # THE GATE. The task is authoritative: no test count is written down
