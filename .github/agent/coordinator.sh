@@ -305,11 +305,35 @@ clamp_limits() { # reads PLIWEE_NIGHT_<UPPER> env; prints the limits object
 
 main_sha() { gh_bot api "repos/$REPO_SLUG/commits/main" --jq .sha; }
 
+# GitHub's server-side issue label filter is not used for coordinator state.
+# A live smoke proved that an issue created with agent:session could be returned
+# by its direct issue endpoint while the server-side label-filtered issue listing
+# returned an empty list moments later. State discovery therefore fetches the complete open
+# issue set and filters labels locally.
+list_open_issues() {
+    gh_bot api --paginate "repos/$REPO_SLUG/issues?state=open&per_page=100" |
+        jq -s -c 'add // []'
+}
+
+list_open_sessions() {
+    local issues
+    issues="$(list_open_issues)" || return 1
+
+    jq -c '
+      [
+        .[] |
+        select(.pull_request == null) |
+        select([.labels[].name] | index("agent:session"))
+      ]
+    ' <<<"$issues"
+}
+
 cmd_start() {
     need_live || return 1
-    local open limits sha now body url
-    open="$(gh_bot api "repos/$REPO_SLUG/issues?labels=agent:session&state=open&per_page=10" --jq length)" \
+    local open sessions limits sha now body url
+    sessions="$(list_open_sessions)" \
         || { fail "start: could not list sessions"; return 1; }
+    open="$(jq 'length' <<<"$sessions")"
     [ "$open" = 0 ] || { fail "start: a session is already open"; return 1; }
     limits="$(clamp_limits)" || return 1
     sha="$(main_sha)" && [ -n "$sha" ] || { fail "start: could not read main"; return 1; }
@@ -328,8 +352,19 @@ cmd_snapshot() {
     local sess issues out ledger='[]' s sn sbody sauthor sj comments now sha
     now="$(date +%s)"
     sha="$(main_sha)" && [ -n "$sha" ] || { fail "snapshot: could not read main"; return 1; }
-    sess="$(gh_bot api "repos/$REPO_SLUG/issues?labels=agent:session&state=open&per_page=10")" \
-        || { fail "snapshot: could not read sessions"; return 1; }
+
+    issues="$(list_open_issues)" \
+        || { fail "snapshot: could not list open issues"; return 1; }
+
+    sess="$(jq -c '
+      [
+        .[] |
+        select(.pull_request == null) |
+        select([.labels[].name] | index("agent:session"))
+      ]
+    ' <<<"$issues")" \
+        || { fail "snapshot: could not derive sessions"; return 1; }
+
     local sessions='[]'
     while IFS= read -r s; do
         [ -n "$s" ] || continue
@@ -350,8 +385,6 @@ cmd_snapshot() {
     done < <(jq -c '.[]' <<<"$sess")
     sessions="$(jq -c 'map(select(.invalid != true))' <<<"$sessions")"
 
-    issues="$(gh_bot api --paginate "repos/$REPO_SLUG/issues?state=open&per_page=100" | jq -s 'add // []')" \
-        || { fail "snapshot: could not list issues"; return 1; }
     local enriched='[]' i n labels editor blocked branch lock run_id run_status dj dvalid tmpf
     while IFS= read -r i; do
         [ -n "$i" ] || continue
@@ -399,7 +432,8 @@ ledger_write() { # SESSION JSON HUMAN
 }
 
 open_session() { # prints the open session number, or nothing; >1 is an error
-    local j; j="$(gh_bot api "repos/$REPO_SLUG/issues?labels=agent:session&state=open&per_page=10")" || return 1
+    local j
+    j="$(list_open_sessions)" || return 1
     jq -e --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | length <= 1' >/dev/null <<<"$j" \
         || { fail "more than one open session"; return 1; }
     jq -r --arg bot "$BOT" '[.[] | select(.user.login == $bot)] | .[0].number // empty' <<<"$j"
@@ -756,7 +790,6 @@ set -- "${args[@]}"
 out() { if [ -n "$jqx" ]; then jq -r "$jqx" "$1"; else cat "$1"; fi; }
 case "$1 $2" in
   "api repos/o/r/commits/main")                       out "$F/main.json" ;;
-  "api repos/o/r/issues?labels=agent:session"*)       out "$F/sessions.json" ;;
   "api repos/o/r/issues?state=open"*)                 out "$F/issues.json" ;;
   "api repos/o/r/issues/"*"/comments?per_page=100")   n="${2#repos/o/r/issues/}"; n="${n%%/*}"; out "$F/comments-$n.json" 2>/dev/null || echo '[]' ;;
   "api repos/o/r/issues/"*"/dependencies/blocked_by") echo '[]' ;;
@@ -770,11 +803,36 @@ FAKE
     git init -q --bare "$T/remote.git"
     local now; now="$(date +%s)"
     jq -n '{sha:"m1"}' > "$F/main.json"
-    jq -n --argjson at "$((now - 600))" --argjson L "$L" \
-        '[{number:100, user:{login:"github-actions[bot]"}, body:("<!-- pliwee-session " + ({start_main_sha:"m1", started_at:$at, limits:$L}|tojson) + " -->")}]' > "$F/sessions.json"
     echo '[]' > "$F/comments-100.json"
-    jq -n '[{number:5, state:"open", user:{login:"owner"}, labels:[{name:"agent:queued"},{name:"priority:P1"}], body:"x"},
-            {number:6, state:"open", user:{login:"stranger"}, labels:[{name:"agent:queued"}], body:"y"}]' > "$F/issues.json"
+    jq -n --argjson at "$((now - 600))" --argjson L "$L" '
+      [
+        {
+          number:100,
+          state:"open",
+          user:{login:"github-actions[bot]"},
+          labels:[{name:"agent:session"}],
+          body:(
+            "<!-- pliwee-session " +
+            ({start_main_sha:"m1", started_at:$at, limits:$L}|tojson) +
+            " -->"
+          )
+        },
+        {
+          number:5,
+          state:"open",
+          user:{login:"owner"},
+          labels:[{name:"agent:queued"},{name:"priority:P1"}],
+          body:"x"
+        },
+        {
+          number:6,
+          state:"open",
+          user:{login:"stranger"},
+          labels:[{name:"agent:queued"}],
+          body:"y"
+        }
+      ]
+    ' > "$F/issues.json"
     run_tick() { : > "$F/calls.log"
         env PATH="$BIN:$PATH" FAKE_GH_DIR="$F" GH_TOKEN=ghs_bot PLIWEE_REPO=o/r PLIWEE_OWNER_LOGIN=owner \
             PLIWEE_AGENT_NIGHT="${1:-enabled}" PLIWEE_AGENT_SANDBOX=required PLIWEE_REMOTE_URL="$T/remote.git" \
@@ -805,8 +863,6 @@ FAKE
     if contains "$out" "only as the worker App" && ! grep -qP '^(app|runner-login)\t' <<<"$calls"; then
         ok "legacy identity: tick STOPs the session and never promotes with the runner's login"
     else notok "legacy identity tick: $out | $calls"; fi
-    jq -n --argjson at "$((now - 600))" --argjson L "$L" \
-        '[{number:100, user:{login:"github-actions[bot]"}, body:("<!-- pliwee-session " + ({start_main_sha:"m1", started_at:$at, limits:$L}|tojson) + " -->")}]' > "$F/sessions.json"
     out="$(run_tick enabled app "")"; calls="$(cat "$F/calls.log")"
     if contains "$out" "no PLIWEE_EXEC_TOKEN" && ! grep -qP '^(app|runner-login)\tissue edit' <<<"$calls"; then
         ok "App mode with no App token: the promotion fails closed, no fallback to the runner's login"
