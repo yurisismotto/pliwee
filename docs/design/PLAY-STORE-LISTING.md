@@ -90,8 +90,8 @@ for a device-to-device bridge, and it is not a borderline call.)
 | Field | Value |
 | --- | --- |
 | Email | `<OPERATOR: support address to publish>` |
-| Website | `https://github.com/yurisismotto/OmniBridge` |
-| Privacy policy | `https://github.com/yurisismotto/OmniBridge/blob/main/docs/policy/PRIVACY-POLICY.md` |
+| Website | `https://github.com/yurisismotto/pliwee` |
+| Privacy policy | `https://yurisismotto.github.io/pliwee/privacy/` — the page rendered from [`policy/PRIVACY-POLICY.md`](../policy/PRIVACY-POLICY.md); the same URL is compiled into the app (`ui/PrivacyPolicy.kt`) |
 
 Lengths as measured on 2026-09-24. Re-measure if the text changes.
 

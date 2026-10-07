@@ -23,6 +23,7 @@ its filename looks like.
 | a sprint result, implementation report or hardening report | [`reports/<area>/`](reports/) | `reports/notifications/` |
 | a record of a rename, port or data migration | [`migrations/`](migrations/) | `migrations/MIGRATION-ANYFLOW-TO-OMNIBRIDGE.md` |
 | a public-facing policy the app or a store links to | [`policy/`](policy/) | `policy/PRIVACY-POLICY.md` |
+| a published web page generated from a document elsewhere in `docs/` — never written by hand | [`privacy/`](privacy/) | `privacy/index.html`, rendered from `policy/PRIVACY-POLICY.md` |
 | how the project is developed: process, CI map, agent workflow, kept current | [`development/`](development/) | `development/TEST-TIERS.md` |
 | the product roadmap: where the project is heading, kept current | [`roadmap/`](roadmap/) | `roadmap/ROADMAP.md` |
 
@@ -76,13 +77,19 @@ docs/
 │   └── ux/                     UX hardening and debt cleanup
 ├── development/                the development process, kept current: AGENT-WORKFLOW, TEST-TIERS
 ├── migrations/                 AnyFlow → OmniBridge; the OmniBridge 1.0.0 Fedora firewall erratum
-├── policy/                     public policies the app links to: PRIVACY-POLICY (its URL is compiled into the app)
+├── policy/                     public policies the app links to: PRIVACY-POLICY, the source of truth, and render-privacy-page.py
+├── privacy/                    index.html, GENERATED from policy/PRIVACY-POLICY.md — the page GitHub Pages serves at
+│                               https://yurisismotto.github.io/pliwee/privacy/, the URL compiled into the app
 └── roadmap/                    ROADMAP — the directional product roadmap; GitHub milestones and issues carry the detail
 ```
 
 A directory holding several related historical documents carries its own
 `README.md` index. The rest are listed by the table above; there is no
 hand-maintained catalogue of every file.
+
+`docs/` is also the GitHub Pages source (branch `main`, folder `/docs`).
+`docs/.nojekyll` makes Pages serve files as they are, so the Markdown here is
+never run through Jekyll; the only page written for the web is `privacy/`.
 
 ## Historical documents are not rewritten
 

@@ -56,7 +56,9 @@ android {
         // Pliwee's. versionCode is Play's ordering key: it must rise for
         // every upload to any Play track, and a code Play has seen once can
         // never be reused — not even for a bundle that was rejected.
-        versionCode = 2
+        // Play has seen 2 (the first 1.1.1 upload); 3 replaces that
+        // submission with the same public version.
+        versionCode = 3
         versionName = "1.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -172,6 +174,16 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+
+// PrivacyPolicyTest reads the policy and its published page straight from
+// docs/. They are not on any source set, so without this Gradle would call the
+// test task UP-TO-DATE after either changed and replay the previous green.
+tasks.withType<Test>().configureEach {
+    inputs.files(
+        "$repositoryRoot/docs/policy/PRIVACY-POLICY.md",
+        "$repositoryRoot/docs/privacy/index.html",
+    ).withPropertyName("privacyPolicy").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 // The release-signing guard. Decided when the task graph is known, so debug

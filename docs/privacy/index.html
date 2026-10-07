@@ -1,0 +1,255 @@
+<!doctype html>
+<!--
+  GENERATED from docs/policy/PRIVACY-POLICY.md by
+  docs/policy/render-privacy-page.py. Do not edit by hand.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="description" content="What the Pliwee Android app and desktop software access, where it goes, and how to stop it.">
+<title>Pliwee Privacy Policy</title>
+<style>
+:root {
+  --bg: #f7f9fa; --surface: #ffffff; --text: #17242b; --muted: #52616a;
+  --line: #dbe3e7; --accent: #0f7f7a; --code: #eef3f5;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1518; --surface: #152025; --text: #e4ecef; --muted: #9db0b8;
+    --line: #26353c; --accent: #45c4bc; --code: #1d2b31;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+}
+header, main, footer { max-width: 46rem; margin: 0 auto; padding: 0 16px; }
+header { padding-top: 2rem; }
+.brand { font-weight: 700; letter-spacing: .02em; color: var(--accent); text-decoration: none; }
+main {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 1.5rem 1.25rem; margin-top: 1rem;
+}
+h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 1rem; }
+h2 { font-size: 1.35rem; margin: 2.2rem 0 .6rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+h3 { font-size: 1.1rem; margin: 1.6rem 0 .4rem; }
+p, ul, ol { margin: .6rem 0; }
+li { margin: .3rem 0; }
+a { color: var(--accent); overflow-wrap: anywhere; }
+code { background: var(--code); border-radius: 4px; padding: .05em .3em; font-size: .92em; overflow-wrap: anywhere; }
+.table { overflow-x: auto; margin: .8rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+th, td { text-align: left; vertical-align: top; padding: .5rem .6rem; border: 1px solid var(--line); }
+th { background: var(--code); }
+footer { color: var(--muted); font-size: .9rem; padding-top: 1.25rem; padding-bottom: 2.5rem; }
+footer p { margin: .3rem 0; }
+@media (min-width: 640px) { main { padding: 2rem 2.5rem; } }
+</style>
+</head>
+<body>
+<header><a class="brand" href="https://github.com/yurisismotto/pliwee">Pliwee</a></header>
+<main>
+<!-- policy:begin -->
+<h1 id="pliwee-privacy-policy">Pliwee Privacy Policy</h1>
+
+<p><strong>Effective:</strong> 2026-10-06</p>
+
+<p><strong>Applies to:</strong> the Pliwee Android app (package <code>io.github.yurisismotto.pliwee</code>) and the Pliwee desktop software it connects to.</p>
+
+<p>Pliwee connects your Android device to computers you own, directly over your local network, so you can move files and clipboard text between them, see your phone&#x27;s notifications on your computer, and see each device&#x27;s battery on the other. This policy says exactly what the app touches, where it goes, and how to stop it.</p>
+
+<h2 id="the-short-version">The short version</h2>
+
+<ul>
+<li><strong>There is no Pliwee server.</strong> No account, no sign-in, no cloud sync. The developer of Pliwee never receives any of your data, because there is no server, service or address for the app to send it to.</li>
+<li><strong>No advertising, analytics, telemetry or crash reporting.</strong> The app includes no advertising or analytics SDK and makes no internet request of its own.</li>
+<li><strong>Data goes only to computers you pair.</strong> You pair a computer by scanning a QR code it shows you. From then on the two talk directly on your local network over an encrypted connection that only that computer can answer.</li>
+<li><strong>Every kind of data has its own switch</strong>, per computer, and can be turned off at any time. Clipboard and notifications are off until you turn them on.</li>
+</ul>
+
+<h2 id="who-is-responsible">Who is responsible</h2>
+
+<p><strong>Developer:</strong> Yuri C. Sismotto, who develops and publishes Pliwee and is responsible for this app and this policy.</p>
+
+<p><strong>Source code:</strong> <a href="https://github.com/yurisismotto/pliwee">https://github.com/yurisismotto/pliwee</a></p>
+
+<p><strong>Privacy contact:</strong> for any question or request about this policy or about your data, open an issue at <a href="https://github.com/yurisismotto/pliwee/issues">https://github.com/yurisismotto/pliwee/issues</a>. Issues are public, so do not include personal information in them.</p>
+
+<h2 id="three-places-your-data-can-be">Three places your data can be</h2>
+
+<p>This policy keeps three things apart:</p>
+
+<ol>
+<li><strong>Processed on your phone.</strong> Most of what the app touches is read and used on your phone and never leaves it: the camera image while you scan, your list of paired computers, your settings, your device key.</li>
+<li><strong>Sent directly to a computer you paired.</strong> File, clipboard, notification and battery data leave your phone only when that kind of data is allowed for that computer, and only to that computer, over your local network. The Pliwee desktop software on that computer is run by you, not by the developer.</li>
+<li><strong>Received by the developer: nothing.</strong> There is no Pliwee backend, cloud service or server. Nothing described in this policy is sent to the developer or to any third party.</li>
+</ol>
+
+<h2 id="what-pliwee-uses-and-why">What Pliwee uses, and why</h2>
+
+<h3 id="pairing-and-device-identity">Pairing and device identity</h3>
+
+<p>When you first pair, the app creates a cryptographic key in your device&#x27;s Android Keystore (hardware-backed where the device supports it). The private key can&#x27;t be exported and never leaves the device. When your phone connects to a paired computer it tells that computer:</p>
+
+<ul>
+<li>a random device identifier created by the app. It is not your Android ID, your IMEI, your advertising ID or any other hardware identifier;</li>
+<li>your device&#x27;s name, which is its model name (for example &quot;SM-X620&quot;);</li>
+<li>that it is an Android device;</li>
+<li>the public fingerprint of its key;</li>
+<li>which Pliwee features and protocol versions it supports.</li>
+</ul>
+
+<p>The computer tells your phone the same kinds of thing about itself: its own random identifier, its name (by default the computer&#x27;s hostname), its key fingerprint and the features it supports.</p>
+
+<p>To find a paired computer on your network, the app listens for the announcements that the Pliwee desktop software makes on the local network (multicast DNS). Your phone only listens; it does not announce itself. The desktop&#x27;s announcement carries the computer&#x27;s identifier and name, and can be turned off on the computer.</p>
+
+<p>On your phone the app keeps a list of the computers you have paired: each one&#x27;s name, identifier, key fingerprint, when you paired it, which features you have allowed it, your settings for it, and up to four local network addresses it was last reached at. The computer keeps the matching record about your phone: its name, identifier, platform, key fingerprint, when it was paired and what it is allowed.</p>
+
+<h3 id="camera-only-to-scan-the-pairing-code">Camera — only to scan the pairing code</h3>
+
+<p>The camera is used only to scan the QR code a computer shows when you pair. Android asks for camera permission only when you tap <strong>Pair</strong>. The image is decoded on your device and discarded. No photo or video is saved or sent. Only the decoded pairing code is used, and only to reach that computer.</p>
+
+<h3 id="clipboard">Clipboard</h3>
+
+<ul>
+<li><strong>Phone → computer: only when you choose to send.</strong> You can send from the Send screen, the Quick Settings tile, or by sharing text to Pliwee. The app never watches your clipboard and never sends it on its own. If the clipboard is marked sensitive (for example a copied password), the app does not show it and asks you again before sending.</li>
+<li><strong>Computer → phone:</strong> text a paired computer sends is held in memory for at most five minutes until you tap to copy it. If you turn on automatic receive for that computer, it is copied straight away.</li>
+<li>What is sent: the text (up to 32 KiB), a checksum of it, whether it is marked sensitive, and a timestamp.</li>
+<li>Clipboard text is never written to your device&#x27;s storage, and the Pliwee desktop software does not write it to disk either. It goes only into the receiving device&#x27;s clipboard.</li>
+</ul>
+
+<p>Clipboard sharing is <strong>off</strong> for each computer until you turn it on.</p>
+
+<h3 id="files">Files</h3>
+
+<ul>
+<li><strong>Phone → computer:</strong> only files you pick in Android&#x27;s file picker or share to Pliwee. Android gives the app access to that one file for that one transfer. Pliwee asks for no storage permission.</li>
+<li><strong>Computer → phone:</strong> you are asked to accept every incoming file. Accepted files are saved to <code>Download/Pliwee</code> on your device. They are yours and stay there, even if you uninstall the app.</li>
+<li>What is sent with a file: its name, size, type and a checksum.</li>
+<li>Files you send to a computer are saved in a <code>Pliwee</code> folder inside that computer&#x27;s Downloads folder.</li>
+<li>The app keeps no history of transfers. The list on screen lasts only while the app is running.</li>
+</ul>
+
+<p>Files are allowed when you pair a computer, because every incoming file still needs your approval. You can turn files off for any computer.</p>
+
+<h3 id="notifications-optional-off-by-default">Notifications (optional, off by default)</h3>
+
+<p>If you turn it on, Pliwee can show your phone&#x27;s notifications on your computer. Three separate things must all be true before anything is sent:</p>
+
+<ol>
+<li><strong>You allow that computer.</strong> Turning this on shows a screen explaining what will be sent, and nothing is allowed until you tap <strong>Allow</strong>.</li>
+<li><strong>You allow Android notification access</strong> for Pliwee in Android&#x27;s own settings.</li>
+<li><strong>You choose which apps.</strong> No app is chosen for you.</li>
+</ol>
+
+<p>For each notification from an app you chose, the computer receives:</p>
+
+<ul>
+<li>the app&#x27;s name and package name;</li>
+<li>the notification&#x27;s title and text;</li>
+<li>when it was posted, its category, importance, lock-screen visibility and progress;</li>
+<li>whether it is ongoing, can be dismissed, summarises a group, or comes from a work profile;</li>
+<li>a random-looking identifier for the notification and a checksum of its content, so the computer can update or remove it.</li>
+</ul>
+
+<p>It never receives pictures, icons, action buttons, reply fields or the people attached to a notification. Pliwee never shares its own notifications, or notifications an app has marked as secret on the lock screen. Ongoing notifications and notifications from a work profile are not shared unless you turn them on for that computer.</p>
+
+<p><strong>While your phone is locked</strong>, only the app&#x27;s name is sent by default. You can change this to send everything or nothing.</p>
+
+<p><strong>When it runs:</strong> Pliwee sends notifications only while your phone is connected to a computer you allowed for this. That can happen while the app is in the background. Pliwee asks Android to attach its notification reader only while such a computer is connected, and to detach it afterwards. One exception has been observed: if Pliwee is force-stopped while attached, Android may re-attach the reader and keep it attached until notification access is turned off and on again. While no allowed computer is connected, nothing is sent anywhere.</p>
+
+<p>Notifications are not stored on your phone. The Pliwee desktop software shows them through your computer&#x27;s own notification system and does not save them; your desktop environment may keep them in its notification list until you dismiss them.</p>
+
+<p>If you turn on <strong>dismiss sync</strong> for a computer, dismissing a notification on that computer dismisses it on your phone. This is off by default, and it never applies to ongoing notifications.</p>
+
+<p>The apps you chose, and the list of apps you were last shown to pick from, are stored on your phone with that computer&#x27;s settings. That list is not sent to the computer.</p>
+
+<h3 id="battery">Battery</h3>
+
+<p>Your phone&#x27;s battery percentage and charging state are sent to a paired computer when it connects, so the computer can show them. This is allowed when you pair, and you can turn it off per computer with the <strong>Battery</strong> switch. A laptop&#x27;s battery reading is sent to your phone and shown there. Neither device stores the other&#x27;s battery readings; they are kept only in memory.</p>
+
+<h3 id="background-connection-foreground-service">Background connection (foreground service)</h3>
+
+<p>While connected, Pliwee runs a foreground service of type &quot;connected device&quot; so the link to your computer stays up with the screen off. It starts only when you pair or connect, or when you share something to a computer. It never starts when the phone boots. It stops when you tap <strong>Disconnect</strong>, revoke the computer, or the connection gives up. While it runs, Pliwee appears in Android&#x27;s list of active apps and shows an ongoing notification if you allow notifications.</p>
+
+<h3 id="notification-permission">Notification permission</h3>
+
+<p>Pliwee asks to post notifications when you first connect. It uses them for the connection status and for &quot;clipboard received&quot; prompts, which show the computer&#x27;s name and the size, never the text. Everything else works without this permission.</p>
+
+<h2 id="how-your-data-is-protected-in-transit">How your data is protected in transit</h2>
+
+<p>Everything between your phone and a computer goes over <strong>TLS 1.3</strong>, and each side proves its identity with its own key. Your phone accepts only the exact computer whose fingerprint it learned when you paired. There is no certificate authority to trick, and no unencrypted connection is ever allowed. Pairing itself is protected by a one-time code in the QR code, which both sides must prove they know. Pliwee does not work over the internet or mobile data; it is built for devices on the same local network.</p>
+
+<h2 id="what-stays-on-your-phone">What stays on your phone</h2>
+
+<ul>
+<li>Your device key and a second key used to derive notification identifiers, both in the Android Keystore and not exportable.</li>
+<li>The paired-computer list and your settings for each computer, described above, in the app&#x27;s private storage.</li>
+<li>Files you accepted, in <code>Download/Pliwee</code>.</li>
+</ul>
+
+<p>App data is excluded from Android cloud backup and from device-to-device transfer, so it is never copied to Google&#x27;s servers or to a new phone.</p>
+
+<h2 id="technical-logs">Technical logs</h2>
+
+<p>Pliwee writes technical events to the Android system log on your phone, such as connection attempts, shortened transfer identifiers, sizes, network addresses and shortened key fingerprints. That log never contains clipboard text, notification content or file names. It stays on your device and Pliwee sends it nowhere.</p>
+
+<p>The Pliwee desktop software writes similar events to your computer&#x27;s system log. On the computer, that log does include the names of files sent to or received from your phone, as well as network addresses and device identifiers. It never contains clipboard text or notification content, and Pliwee sends it nowhere.</p>
+
+<h2 id="sharing-with-third-parties">Sharing with third parties</h2>
+
+<p>Pliwee does not sell, rent or share your data with anyone, and has no third party to share it with: no advertising network, analytics provider or cloud host. The only place anything goes is a computer you paired yourself, and you choose, per computer, what it may receive.</p>
+
+<h2 id="your-choices-and-how-to-stop">Your choices, and how to stop</h2>
+
+<div class="table"><table>
+<thead><tr><th>To stop…</th><th>Do this</th></tr></thead>
+<tbody>
+<tr><td>one kind of data to one computer</td><td>open the computer in <strong>Devices</strong> and turn off Clipboard, Files or Battery; for notifications, turn off <strong>Share notifications with this computer</strong></td></tr>
+<tr><td>all notification reading</td><td>turn off Pliwee in Android&#x27;s <strong>Notification access</strong> settings</td></tr>
+<tr><td>everything to one computer</td><td><strong>Revoke this device</strong> on its card</td></tr>
+<tr><td>the current connection</td><td><strong>Disconnect</strong></td></tr>
+<tr><td>everything, everywhere</td><td>uninstall Pliwee, or clear its storage in Android settings</td></tr>
+</tbody>
+</table></div>
+
+<p>Camera and notification permissions can also be withdrawn at any time in Android&#x27;s app settings.</p>
+
+<h3 id="revoking-and-removing-a-computer">Revoking and removing a computer</h3>
+
+<p><strong>Revoke this device</strong> takes effect on your phone at once: the connection is closed, every permission and setting for that computer is erased, its saved network addresses are forgotten, and your phone refuses to connect to it again. Nothing is sent to the computer to announce it; it simply can no longer connect. You can then <strong>Remove from list</strong>, which erases the computer&#x27;s name, identifier and pairing date and keeps only its key fingerprint, marked as revoked, so that the same key is not silently accepted again.</p>
+
+<p>A computer can also unpair your phone from its own side. The phone then can no longer connect to it.</p>
+
+<h3 id="deleting-your-data">Deleting your data</h3>
+
+<ul>
+<li><strong>Data on your phone:</strong> clear Pliwee&#x27;s storage in Android settings, or uninstall the app. Either deletes the device key, the notification key, the paired-computer list and all settings. You will need to pair again.</li>
+<li><strong>Files you received</strong> stay in <code>Download/Pliwee</code> until you delete them, because they are your files, not the app&#x27;s.</li>
+<li><strong>Data on your computer:</strong> the Pliwee desktop software keeps its record of your phone, and any files you sent, on your computer. Unpair the phone there, delete the files, or uninstall the desktop software.</li>
+</ul>
+
+<h3 id="uninstalling">Uninstalling</h3>
+
+<p>Uninstalling the app deletes everything it stored on your phone, as Android removes an app&#x27;s private storage and keys with the app. Files you accepted, in <code>Download/Pliwee</code>, are not deleted. Nothing needs to be deleted anywhere else, because the developer holds none of your data.</p>
+
+<h2 id="children">Children</h2>
+
+<p>Pliwee is a tool for connecting your own devices. It is not directed at children, and it does not knowingly collect any data from anyone, child or adult.</p>
+
+<h2 id="changes">Changes</h2>
+
+<p>Changes to this policy are published at this address, with a new effective date. Because the policy lives beside the source code, every change is recorded in the project&#x27;s public history at <a href="https://github.com/yurisismotto/pliwee">https://github.com/yurisismotto/pliwee</a>.</p>
+<!-- policy:end -->
+</main>
+<footer>
+<p>Source: <a href="https://github.com/yurisismotto/pliwee/blob/main/docs/policy/PRIVACY-POLICY.md">docs/policy/PRIVACY-POLICY.md</a> · history: <a href="https://github.com/yurisismotto/pliwee/commits/main/docs/policy/PRIVACY-POLICY.md">changes to this policy</a></p>
+<p>Questions: <a href="https://github.com/yurisismotto/pliwee/issues">https://github.com/yurisismotto/pliwee/issues</a></p>
+<p>This page uses no cookies, scripts, trackers or external resources.</p>
+</footer>
+</body>
+</html>

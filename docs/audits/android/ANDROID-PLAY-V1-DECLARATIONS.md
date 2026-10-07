@@ -185,6 +185,8 @@ declaration cannot be submitted until that URL exists.
 
 ## PLAY13 — App content checklist
 
+> **Superseding note — 2026-10-06, branch `fix/privacy-policy-pliwee`.** The privacy-policy URL to declare is now **`https://yurisismotto.github.io/pliwee/privacy/`**, the GitHub Pages rendering of [`docs/policy/PRIVACY-POLICY.md`](../../policy/PRIVACY-POLICY.md), which was rewritten as the **Pliwee Privacy Policy** for `io.github.yurisismotto.pliwee`. The same URL is compiled into the app from versionCode 3 (`ui/PrivacyPolicy.kt`). It resolves only once GitHub Pages is enabled for `/docs` on `main`. The OmniBridge URL in the row below was compiled into the versionCode 2 bundle and is retired. The text below is left as it was written.
+
 | Section | Answer | Basis |
 | --- | --- | --- |
 | Privacy policy | `https://github.com/yurisismotto/OmniBridge/blob/main/docs/policy/PRIVACY-POLICY.md` | **Resolves only after this branch is merged to `main`.** Merge before the first review |
