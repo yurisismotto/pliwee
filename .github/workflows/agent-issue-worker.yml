@@ -413,9 +413,6 @@ jobs:
           set -u
           [ -n "${COORD:-}" ] || { echo "::error::no trusted copy; nothing can be recorded"; exit 1; }
           class="$("$COORD" classify)"
-          if [ "$OUT_REPORTED" != blocked ] && [ "$OUT_REPORTED" != owner-decision ] && [ "$OUT_WORK" = success ] && [ "$OUT_VERIFY" = skipped ]; then
-              class=FAILED_PRODUCT   # the worker said done and left no commit
-          fi
           jq -n --arg g0 "${OUT_VERIFY}" --arg ci "${OUT_CI:-not run}" '{
               G0_repository_integrity: (if $g0 == "success" then "PASS" elif $g0 == "skipped" or $g0 == "" then "NOT_RUN" else "FAIL" end),
               G5_guard: (if $g0 == "success" then "PASS" elif $g0 == "skipped" or $g0 == "" then "NOT_RUN" else "FAIL" end),

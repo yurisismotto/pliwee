@@ -143,7 +143,11 @@ cmd_classify() {
     case "$gate" in blocked) echo BLOCKED; return ;; ok) ;; *) echo FAILED_INFRA; return ;; esac
     case "$rep" in owner-decision) echo OWNER_DECISION_REQUIRED; return ;; blocked) echo BLOCKED; return ;; esac
     if [ "$work" != success ] || [ "$rep" = failed ]; then echo FAILED_PRODUCT; return; fi
-    if [ "$ver" != success ]; then echo SECURITY; return; fi           # a guard rail refused the work
+    case "$ver" in
+        success) ;;
+        skipped|"") echo FAILED_PRODUCT; return ;;                     # no commit: nothing was verified
+        *) echo SECURITY; return ;;                                     # a guard rail refused the work
+    esac
     if [ "$pub" != success ]; then echo FAILED_INFRA; return; fi
     case "$ci" in
         pass)    echo PASS ;;
@@ -646,6 +650,7 @@ selftest() {
     cls OWNER_DECISION_REQUIRED OUT_IDENTITY=success OUT_GATE=ok OUT_WORK=success OUT_REPORTED=owner-decision
     cls FAILED_PRODUCT OUT_IDENTITY=success OUT_GATE=ok OUT_WORK=failure
     cls SECURITY "${good[@]/OUT_VERIFY=success/OUT_VERIFY=failure}" OUT_CI=pass
+    cls FAILED_PRODUCT OUT_IDENTITY=success OUT_GATE=ok OUT_WORK=success OUT_REPORTED= OUT_VERIFY=skipped
     cls FAILED_PRODUCT "${good[@]}" OUT_CI=fail
     cls FAILED_INFRA "${good[@]}" OUT_CI=pending
     cls FAILED_INFRA "${good[@]}" OUT_CI=missing

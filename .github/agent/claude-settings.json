@@ -21,6 +21,7 @@
       "Bash(git fetch origin:*)",
       "Bash(git rev-parse:*)",
       "Bash(git ls-files:*)",
+      "Bash(bash -n:*)",
       "Bash(./.github/agent/agent-guard.sh:*)",
       "Bash(cargo fmt:*)",
       "Bash(cargo clippy:*)",
