@@ -64,7 +64,7 @@ infra_error() {
 
 policy_denial() {
     grep -Eqi \
-      'Repository rule violations found|Resource not accessible by integration|Cannot delete the default branch|refusing to allow a GitHub App|not authorized|not permitted|forbidden|protected ref|HTTP (403|405)' \
+      'Repository rule violations found|Resource not accessible by integration|Cannot delete the default branch|refusing to allow a GitHub App|Auto merge is not allowed for this repository|not authorized|not permitted|forbidden|protected ref|HTTP (403|405)' \
       <<<"$1"
 }
 
@@ -292,74 +292,332 @@ cmd_run() {
     else rec G6.7 BLOCKED "no owner PR" "$opr"; rec G6.8 BLOCKED "no owner PR" "$opr"; fi
 
     # ---- Draft / Ready boundary --------------------------------------------
+    #
+    # Earlier merge probes intentionally put this PR into Ready state as the
+    # owner. Reset it to a real Draft before testing either execution identity.
+    # Ready -> Ready is idempotent and proves nothing about permissions.
     if [ -n "$pr" ]; then
-        local rnode
-        rnode="$(broker_api "repos/$REPO_SLUG/pulls/$pr" --jq .node_id)"
+        local rnode reset_out reset_rc reset_state
 
-        deny G7.13a \
-            "worker App marks the worker PR ready for review" \
-            app_api graphql \
-            -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}' \
-            -f id="$rnode"
-
-        local ready_out ready_rc
-        ready_out="$(
-            broker_api graphql \
-              -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}' \
-              -f id="$rnode"
+        rnode="$(
+            broker_api \
+              "repos/$REPO_SLUG/pulls/$pr" \
+              --jq .node_id
         )"
-        ready_rc=$?
 
-        if [ "$ready_rc" -ne 0 ]; then
-            if infra_error "$ready_out"; then
-                rec G7.13b BLOCKED \
-                    "PR broker Ready probe hit infrastructure/network failure" \
-                    "$ready_out"
+        reset_out="$(
+            owner_api graphql \
+              -f query='mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
+              -f id="$rnode" \
+              --jq '.data.convertPullRequestToDraft.pullRequest.isDraft'
+        )"
+        reset_rc=$?
+
+        if [ "$reset_rc" -ne 0 ]; then
+            if infra_error "$reset_out"; then
+                rec G7.13pre BLOCKED \
+                    "owner Draft reset hit infrastructure/network failure" \
+                    "$reset_out"
             else
-                rec G7.13b FAIL \
-                    "PR broker could not exercise the Ready guard" \
-                    "$ready_out"
+                rec G7.13pre FAIL \
+                    "owner could not reset certification PR to Draft" \
+                    "$reset_out"
             fi
+
+        elif [ "$reset_out" = true ]; then
+            rec G7.13pre PASS \
+                "certification PR reset to Draft before permission probes" \
+                "#$pr"
+
         else
+            rec G7.13pre FAIL \
+                "Draft reset did not produce isDraft=true" \
+                "$reset_out"
+        fi
+
+        reset_state="$(
+            owner_api \
+              "repos/$REPO_SLUG/pulls/$pr" \
+              --jq .draft
+        )"
+
+        if [ "$reset_state" != true ]; then
+
+            rec G7.13a BLOCKED \
+                "worker Ready probe requires a real Draft PR" \
+                "draft=$reset_state"
+
+            rec G7.13b BLOCKED \
+                "broker Ready-guard probe requires a real Draft PR" \
+                "draft=$reset_state"
+
+        else
+
+            ##################################################################
+            # WORKER
+            #
+            # Worker has NO Pull requests permission.
+            # Real Draft -> Ready must be denied.
+            ##################################################################
+
+            local worker_ready_out worker_ready_rc worker_state
+
+            worker_ready_out="$(
+                app_api graphql \
+                  -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
+                  -f id="$rnode"
+            )"
+            worker_ready_rc=$?
+
+            worker_state="$(
+                owner_api \
+                  "repos/$REPO_SLUG/pulls/$pr" \
+                  --jq .draft
+            )"
+
+            if infra_error "$worker_ready_out"; then
+
+                rec G7.13a BLOCKED \
+                    "worker Draft -> Ready probe hit infrastructure/network failure" \
+                    "$worker_ready_out"
+
+            elif [ "$worker_ready_rc" -eq 0 ]; then
+
+                rec G7.13a FAIL \
+                    "worker App was allowed to invoke Draft -> Ready" \
+                    "$worker_ready_out; resulting draft=$worker_state"
+
+            elif policy_denial "$worker_ready_out" &&
+                 [ "$worker_state" = true ]; then
+
+                rec G7.13a PASS \
+                    "worker App cannot mark a Draft PR ready" \
+                    "$worker_ready_out"
+
+            elif [ "$worker_state" != true ]; then
+
+                rec G7.13a FAIL \
+                    "worker Ready probe changed PR out of Draft" \
+                    "$worker_ready_out; draft=$worker_state"
+
+            else
+
+                rec G7.13a BLOCKED \
+                    "worker Ready refusal was not proven to be permission enforcement" \
+                    "$worker_ready_out"
+            fi
+
+            ##################################################################
+            # Re-establish Draft if an unexpected worker behavior changed it.
+            ##################################################################
+
+            if [ "$(
+                owner_api \
+                  "repos/$REPO_SLUG/pulls/$pr" \
+                  --jq .draft
+            )" != true ]; then
+
+                owner_api graphql \
+                  -f query='mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
+                  -f id="$rnode" \
+                  >/dev/null
+            fi
+
+            ##################################################################
+            # BROKER
+            #
+            # Broker has Pull requests:write, so it CAN transition to Ready.
+            # We prove:
+            #
+            #   Draft=true -> Ready(isDraft=false)
+            #   Agent ready guard SUCCESS
+            #   final Draft=true
+            ##################################################################
+
+            local broker_ready_out broker_ready_rc
             local d=false poll_out=""
+            local guard_json="" guard_rc=0 guard_run=""
+            local guard_evidence="" pr_head=""
 
-            for _ in $(seq 1 18); do
-                sleep 10
+            broker_ready_out="$(
+                broker_api graphql \
+                  -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
+                  -f id="$rnode" \
+                  --jq '.data.markPullRequestReadyForReview.pullRequest.isDraft'
+            )"
+            broker_ready_rc=$?
 
-                poll_out="$(
-                    owner_api \
-                      "repos/$REPO_SLUG/pulls/$pr" \
-                      --jq .draft
-                )"
+            if [ "$broker_ready_rc" -ne 0 ]; then
 
-                if infra_error "$poll_out"; then
-                    d=infra
-                    break
+                if infra_error "$broker_ready_out"; then
+
+                    rec G7.13b BLOCKED \
+                        "PR broker Ready probe hit infrastructure/network failure" \
+                        "$broker_ready_out"
+
+                else
+
+                    rec G7.13b FAIL \
+                        "PR broker could not perform real Draft -> Ready transition" \
+                        "$broker_ready_out"
                 fi
 
-                d="$poll_out"
+            elif [ "$broker_ready_out" != false ]; then
 
-                [ "$d" = true ] && break
-            done
-
-            if [ "$d" = true ]; then
-                rec G7.13b PASS \
-                    "PR broker's Draft → Ready is returned to Draft by the trusted guard" \
-                    "#$pr back to draft"
-            elif [ "$d" = infra ]; then
-                rec G7.13b BLOCKED \
-                    "Ready-guard observation hit infrastructure/network failure" \
-                    "$poll_out"
-            else
                 rec G7.13b FAIL \
-                    "broker-authored worker PR stayed Ready for review" \
-                    "#$pr"
+                    "PR broker mutation did not prove isDraft=false" \
+                    "$broker_ready_out"
+
+            else
+
+                ################################################################
+                # Wait until guard mutation restores Draft.
+                ################################################################
+
+                for _ in $(seq 1 18); do
+                    sleep 10
+
+                    poll_out="$(
+                        owner_api \
+                          "repos/$REPO_SLUG/pulls/$pr" \
+                          --jq .draft
+                    )"
+
+                    if infra_error "$poll_out"; then
+                        d=infra
+                        break
+                    fi
+
+                    d="$poll_out"
+
+                    [ "$d" = true ] &&
+                        break
+                done
+
+                if [ "$d" = true ]; then
+
+                    pr_head="$(
+                        owner_api \
+                          "repos/$REPO_SLUG/pulls/$pr" \
+                          --jq .head.sha
+                    )"
+
+                    ################################################################
+                    # State=true alone is insufficient. Prove that a SUCCESSFUL
+                    # Agent · ready guard workflow produced it.
+                    ################################################################
+
+                    for _ in $(seq 1 12); do
+
+                        guard_json="$(
+                            env -u GH_TOKEN \
+                            gh run list \
+                              -R "$REPO_SLUG" \
+                              --workflow agent-ready-guard.yml \
+                              --event pull_request \
+                              --limit 20 \
+                              --json headSha,status,conclusion,databaseId \
+                              2>&1
+                        )"
+                        guard_rc=$?
+
+                        if [ "$guard_rc" -ne 0 ]; then
+                            break
+                        fi
+
+                        guard_run="$(
+                            jq -r \
+                              --arg sha "$pr_head" \
+                              '[
+                                 .[]
+                                 | select(
+                                     .headSha == $sha
+                                     and .status == "completed"
+                                     and .conclusion == "success"
+                                   )
+                               ]
+                               | first
+                               | if . == null
+                                 then ""
+                                 else "\(.status):\(.conclusion):\(.databaseId)"
+                                 end' \
+                              <<<"$guard_json"
+                        )"
+
+                        [ -n "$guard_run" ] &&
+                            break
+
+                        sleep 5
+                    done
+
+                    if [ "$guard_rc" -ne 0 ]; then
+
+                        if infra_error "$guard_json"; then
+
+                            rec G7.13b BLOCKED \
+                                "Ready guard restored Draft but workflow evidence hit infrastructure failure" \
+                                "$guard_json"
+
+                        else
+
+                            rec G7.13b BLOCKED \
+                                "Ready guard restored Draft but workflow run could not be inspected" \
+                                "$guard_json"
+                        fi
+
+                    elif [ -n "$guard_run" ]; then
+
+                        rec G7.13b PASS \
+                            "broker Draft -> Ready was restored to Draft by a successful trusted guard run" \
+                            "#$pr; guard=$guard_run"
+
+                    else
+
+                        guard_evidence="$(
+                            jq -c \
+                              --arg sha "$pr_head" \
+                              '[
+                                 .[]
+                                 | select(.headSha == $sha)
+                                 | {
+                                     status,
+                                     conclusion,
+                                     databaseId
+                                   }
+                               ]' \
+                              <<<"$guard_json"
+                        )"
+
+                        rec G7.13b FAIL \
+                            "Draft returned but no successful Ready-guard run was proven" \
+                            "$guard_evidence"
+                    fi
+
+                elif [ "$d" = infra ]; then
+
+                    rec G7.13b BLOCKED \
+                        "Ready-guard observation hit infrastructure/network failure" \
+                        "$poll_out"
+
+                else
+
+                    rec G7.13b FAIL \
+                        "broker-authored worker PR stayed Ready for review" \
+                        "#$pr"
+                fi
             fi
         fi
+
     else
+
+        rec G7.13pre BLOCKED \
+            "no certification PR for Draft reset" \
+            ""
+
         rec G7.13a BLOCKED \
             "no certification PR for worker Ready denial" \
             ""
+
         rec G7.13b BLOCKED \
             "no certification PR for broker Ready guard" \
             ""
@@ -367,10 +625,149 @@ cmd_run() {
 
     # ---- G6: the owner keeps the final boundary -----------------------------
     if [ -n "$pr" ]; then
-        owner_api -X POST "repos/$REPO_SLUG/pulls/$pr/reviews" -f event=APPROVE >/dev/null
-        allow G6.9 "the owner approves and merges the broker-authored worker PR (into certify/main)" \
-            owner_api -X PUT "repos/$REPO_SLUG/pulls/$pr/merge" -f merge_method=merge
-    else rec G6.9 BLOCKED "no certification PR" ""; fi
+
+        local final_node final_ready final_state
+        local final_worker_merge final_worker_rc
+
+        final_node="$(
+            owner_api \
+              "repos/$REPO_SLUG/pulls/$pr" \
+              --jq .node_id
+        )"
+
+        ######################################################################
+        # OWNER marks Ready.
+        #
+        # ready-guard deliberately excludes repository owner.
+        ######################################################################
+
+        final_ready="$(
+            owner_api graphql \
+              -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
+              -f id="$final_node" \
+              --jq '.data.markPullRequestReadyForReview.pullRequest.isDraft'
+        )"
+
+        final_state="$(
+            owner_api \
+              "repos/$REPO_SLUG/pulls/$pr" \
+              --jq .draft
+        )"
+
+        if [ "$final_ready" = false ] &&
+           [ "$final_state" = false ]; then
+
+            rec G6.9pre PASS \
+                "owner alone returns certification PR to Ready" \
+                "#$pr"
+
+        else
+
+            rec G6.9pre BLOCKED \
+                "could not prove owner Ready transition before final merge probes" \
+                "mutation=$final_ready state=$final_state"
+        fi
+
+        ######################################################################
+        # OWNER approval.
+        ######################################################################
+
+        owner_api \
+          -X POST \
+          "repos/$REPO_SLUG/pulls/$pr/reviews" \
+          -f event=APPROVE \
+          >/dev/null
+
+        ######################################################################
+        # PR broker:
+        #
+        # Pull requests write
+        # Contents NONE
+        #
+        # Must never merge.
+        ######################################################################
+
+        deny G6.9a \
+            "PR broker cannot merge even after owner approval" \
+            broker_api \
+            -X PUT \
+            "repos/$REPO_SLUG/pulls/$pr/merge" \
+            -f merge_method=merge
+
+        ######################################################################
+        # Worker:
+        #
+        # Contents write
+        # Pull requests NONE
+        #
+        # Since Contents permission reaches the merge endpoint, this must be
+        # stopped SPECIFICALLY by owner-only protected certify/main updates.
+        ######################################################################
+
+        final_worker_merge="$(
+            app_api \
+              -X PUT \
+              "repos/$REPO_SLUG/pulls/$pr/merge" \
+              -f merge_method=merge
+        )"
+        final_worker_rc=$?
+
+        if [ "$final_worker_rc" -eq 0 ]; then
+
+            rec G6.9b FAIL \
+                "worker App merged after owner approval — protected-ref boundary failed" \
+                "$final_worker_merge"
+
+        elif infra_error "$final_worker_merge"; then
+
+            rec G6.9b BLOCKED \
+                "worker post-approval merge probe hit infrastructure/network failure" \
+                "$final_worker_merge"
+
+        elif grep -Eqi \
+              'Cannot update this protected ref|Repository rule violations found' \
+              <<<"$final_worker_merge"; then
+
+            rec G6.9b PASS \
+                "worker App cannot update certify/main even after owner approval" \
+                "$final_worker_merge"
+
+        else
+
+            rec G6.9b BLOCKED \
+                "worker merge was refused, but owner-only protected-ref enforcement was not proven" \
+                "$final_worker_merge"
+        fi
+
+        ######################################################################
+        # OWNER alone may update certify/main.
+        ######################################################################
+
+        allow G6.9c \
+            "owner alone merges approved worker PR into certify/main" \
+            owner_api \
+            -X PUT \
+            "repos/$REPO_SLUG/pulls/$pr/merge" \
+            -f merge_method=merge
+
+    else
+
+        rec G6.9pre BLOCKED \
+            "no certification PR" \
+            ""
+
+        rec G6.9a BLOCKED \
+            "no certification PR" \
+            ""
+
+        rec G6.9b BLOCKED \
+            "no certification PR" \
+            ""
+
+        rec G6.9c BLOCKED \
+            "no certification PR" \
+            ""
+    fi
 
     # ---- cleanup, as the owner ----------------------------------------------
     local n; for n in $pr ${opr:-}; do owner_api -X PATCH "repos/$REPO_SLUG/pulls/$n" -f state=closed >/dev/null; done
