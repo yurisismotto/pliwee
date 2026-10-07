@@ -203,7 +203,7 @@ selftest() {
     # A fake account: a gh login, an ssh key, Claude state, a cargo cache, and a
     # runner directory holding its credentials and the work tree.
     local H="$T/home" RR="$T/home/actions-runner"
-    mkdir -p "$H/.config/gh" "$H/.ssh" "$H/.claude" "$H/.cargo/registry" "$RR/_work/_temp/work" "$RR/_work/_temp/outbox"
+    mkdir -p "$H/.config/gh" "$H/.ssh" "$H/.claude" "$H/.cargo/registry" "$H/.cache/pliwee-cargo" "$RR/_work/_temp/work" "$RR/_work/_temp/outbox"
     echo 'oauth_token: gho_SELFTEST_SECRET' > "$H/.config/gh/hosts.yml"
     echo 'PRIVATE KEY' > "$H/.ssh/id_ed25519"
     echo '{"token":"runner-secret"}' > "$RR/.credentials"
@@ -238,6 +238,14 @@ selftest() {
     sb bash -c 'echo built > ~/.cargo/registry/x; echo done > "$PLIWEE_SANDBOX_WORK/f"; echo out > "$PLIWEE_SANDBOX_OUTBOX/o"' >/dev/null 2>&1
     [ -s "$H/.cargo/registry/x" ] && [ -s "$W/f" ] && [ -s "$O/o" ] \
         && ok "ACCEPTS writing the work copy, the outbox and the build caches" || notok "work, outbox or cache not writable"
+    out="$(env HOME="$H" PLIWEE_RUNNER_ROOT="$RR" \
+               CARGO_HOME="$H/.cache/pliwee-cargo" \
+               "$SELF" run --work "$W" --outbox "$O" -- \
+               bash -c 'echo RAN-INSIDE; : > "$CARGO_HOME/cache-write-proof"' 2>&1)"; rc=$?
+    { [ "$rc" -eq 0 ] && contains "$out" "RAN-INSIDE" \
+      && [ -f "$H/.cache/pliwee-cargo/cache-write-proof" ]; } \
+        && ok "ACCEPTS a dedicated writable CARGO_HOME under the sandbox cache" \
+        || notok "dedicated CARGO_HOME was not writable inside the sandbox: $out"
     out="$(env HOME="$H" PLIWEE_RUNNER_ROOT="$RR" PLIWEE_SANDBOX_ENV="GH_TOKEN" GH_TOKEN=x "$SELF" run --work "$W" --outbox "$O" -- true 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && contains "$out" "refusing to pass GH_TOKEN" \
         && ok "REJECTS an allow list that names a token" || notok "a token name was accepted into the allow list: $out"
