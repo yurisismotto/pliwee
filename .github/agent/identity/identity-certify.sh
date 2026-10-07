@@ -22,6 +22,7 @@ set -uo pipefail
 REPO_SLUG="${PLIWEE_REPO:-yurisismotto/pliwee}"
 OWNER="${PLIWEE_OWNER_LOGIN:-yurisismotto}"
 BOT="${PLIWEE_WORKER_APP_BOT:-}"
+BROKER_BOT="${PLIWEE_PR_BROKER_APP_BOT:-}"
 OUT="${CERT_OUT:-$PWD/identity-cert-$(date -u +%Y%m%dT%H%M%SZ)}"
 URL="https://github.com/$REPO_SLUG.git"
 TAG="cert$(date +%s)"
@@ -35,7 +36,15 @@ rec() { # ID VERDICT DESC EVIDENCE
     say "$(printf '%-5s %-7s %s — %s' "$1" "$2" "$3" "${4:0:220}")"
 }
 APP_TOKEN=""
-app_api() { GH_TOKEN="$APP_TOKEN" gh api "$@" 2>&1; }
+BROKER_TOKEN=""
+
+app_api() {
+    GH_TOKEN="$APP_TOKEN" gh api "$@" 2>&1
+}
+
+broker_api() {
+    GH_TOKEN="$BROKER_TOKEN" gh api "$@" 2>&1
+}
 owner_api() { env -u GH_TOKEN gh api "$@" 2>&1; }
 app_git() { # git with the App token as the only credential
     env GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
@@ -43,17 +52,69 @@ app_git() { # git with the App token as the only credential
         GIT_CONFIG_VALUE_1="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)" \
         GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git "$@" 2>&1
 }
-# deny ID DESC CMD... — CMD must FAIL; its output is the evidence.
-deny() { local id="$1" d="$2" out rc; shift 2; out="$("$@")"; rc=$?
-    if [ "$rc" -ne 0 ]; then rec "$id" PASS "$d (refused)" "$out"; else rec "$id" FAIL "$d — it was ALLOWED" "$out"; fi; }
-allow() { local id="$1" d="$2" out rc; shift 2; out="$("$@")"; rc=$?
-    if [ "$rc" -eq 0 ]; then rec "$id" PASS "$d" "$out"; else rec "$id" FAIL "$d — refused" "$out"; fi; }
+# A negative security gate passes only when the remote side demonstrably
+# refused the operation for policy/permission reasons. Network failures are
+# never proof of security.
+
+infra_error() {
+    grep -Eqi \
+      'Could not resolve host|error connecting to|connection reset|connection refused|network is unreachable|operation timed out|TLS|HTTP (429|500|502|503|504)' \
+      <<<"$1"
+}
+
+policy_denial() {
+    grep -Eqi \
+      'Repository rule violations found|Resource not accessible by integration|Cannot delete the default branch|refusing to allow a GitHub App|not authorized|not permitted|forbidden|protected ref|HTTP (403|405)' \
+      <<<"$1"
+}
+
+deny() {
+    local id="$1" d="$2" out rc
+    shift 2
+
+    out="$("$@")"
+    rc=$?
+
+    if [ "$rc" -eq 0 ]; then
+        rec "$id" FAIL "$d — it was ALLOWED" "$out"
+    elif infra_error "$out"; then
+        rec "$id" BLOCKED \
+          "$d — infrastructure/network error, not a security denial" \
+          "$out"
+    elif policy_denial "$out"; then
+        rec "$id" PASS "$d (refused)" "$out"
+    else
+        rec "$id" BLOCKED \
+          "$d — refusal was not proven to be policy/permission enforcement" \
+          "$out"
+    fi
+}
+
+allow() {
+    local id="$1" d="$2" out rc
+    shift 2
+
+    out="$("$@")"
+    rc=$?
+
+    if [ "$rc" -eq 0 ]; then
+        rec "$id" PASS "$d" "$out"
+    elif infra_error "$out"; then
+        rec "$id" BLOCKED "$d — infrastructure/network error" "$out"
+    else
+        rec "$id" FAIL "$d — refused" "$out"
+    fi
+}
 
 cmd_run() {
     local f; for f in gh git jq curl base64; do command -v "$f" >/dev/null || { echo "PRECONDITION: $f missing"; return 3; }; done
     [ -n "$BOT" ] || { echo "PRECONDITION: PLIWEE_WORKER_APP_BOT is not set"; return 3; }
+    [ -n "$BROKER_BOT" ] || { echo "PRECONDITION: PLIWEE_PR_BROKER_APP_BOT is not set"; return 3; }
     [ -s "${CERT_APP_TOKEN_FILE:-}" ] || { echo "PRECONDITION: CERT_APP_TOKEN_FILE is empty"; return 3; }
+    [ -s "${CERT_BROKER_TOKEN_FILE:-}" ] || { echo "PRECONDITION: CERT_BROKER_TOKEN_FILE is empty"; return 3; }
+
     APP_TOKEN="$(cat "$CERT_APP_TOKEN_FILE")"
+    BROKER_TOKEN="$(cat "$CERT_BROKER_TOKEN_FILE")"
     say "identity certification of $BOT on $REPO_SLUG — $(date -u +%FT%TZ) — evidence in $OUT"
 
     # ---- G1–G3: the model's side, on this host --------------------------------
@@ -75,6 +136,15 @@ cmd_run() {
     [ "$v" != "$OWNER" ] && rec G4.4 PASS "the execution identity is not the owner" "$v" || rec G4.4 FAIL "the token IS the owner" "$v"
     local perms; perms="$(app_api "repos/$REPO_SLUG" --jq '.permissions | to_entries | map(select(.value)) | map(.key) | join(",")')"
     rec G4.5 "$( [[ ",$perms," != *",admin,"* && ",$perms," != *",maintain,"* ]] && echo PASS || echo FAIL)" "repository role of the App: no admin, no maintain" "$perms"
+    local brepos bv
+
+    brepos="$(broker_api /installation/repositories --jq '[.repositories[].full_name] | join(",")')"
+
+    [ "$brepos" = "$REPO_SLUG" ]         && rec G4.5b PASS "the PR broker is installed on $REPO_SLUG only" "$brepos"         || rec G4.5b FAIL "the PR broker reaches '$brepos'" "$brepos"
+
+    bv="$(broker_api graphql -f query='{viewer{login}}' --jq .data.viewer.login)"
+
+    [ "$bv" = "$BROKER_BOT" ]         && rec G4.5c PASS "the broker token acts as $BROKER_BOT" "$bv"         || rec G4.5c FAIL "the broker token acts as '$bv'" "$bv"
 
     # ---- preconditions: the rulesets this certifies -----------------------
     local rs; rs="$(owner_api "repos/$REPO_SLUG/rulesets" --jq '[.[] | select(.enforcement == "active") | .name]')"
@@ -102,12 +172,60 @@ cmd_run() {
     git switch -q -c feature/issue-999999-worker origin/main
     echo "certification $TAG" > CERTIFY.txt; git add CERTIFY.txt; git commit -q -m "test(agent): identity certification probe" -m "Never merged into main."
 
-    # ---- what the App must be able to do -----------------------------------
-    allow G4.6 "the App pushes a feature/issue-N-worker branch" app_git push -q "$URL" HEAD:refs/heads/feature/issue-999999-worker
-    local pr
-    pr="$(app_api -X POST "repos/$REPO_SLUG/pulls" -f title="CERTIFY $TAG (never merge)" -f head=feature/issue-999999-worker \
-          -f base=certify/main -F draft=true -f body="Identity certification probe. Never merged into main." --jq .number)"
-    [[ "$pr" =~ ^[0-9]+$ ]] && rec G4.7 PASS "the App opens a draft PR" "#$pr" || { rec G4.7 FAIL "the App could not open a draft PR" "$pr"; pr=""; }
+    # ---- split publication capabilities -----------------------------------
+    allow G4.6 \
+        "worker App pushes a feature/issue-N-worker branch" \
+        app_git push -q "$URL" HEAD:refs/heads/feature/issue-999999-worker
+
+    # The worker publishes Git objects but has no Pull requests permission.
+    deny G4.6b \
+        "worker App opens a pull request" \
+        app_api -X POST "repos/$REPO_SLUG/pulls" \
+        -f title="must-not-open" \
+        -f head=feature/issue-999999-worker \
+        -f base=certify/main \
+        -F draft=true \
+        -f body=probe
+
+    # The broker has PR permission but no Contents permission. The worker
+    # branch is intentionally used here because no branch-name rule would
+    # otherwise hide an accidentally granted Contents permission.
+    deny G4.6c \
+        "PR broker writes repository contents" \
+        broker_api -X PUT \
+        "repos/$REPO_SLUG/contents/BROKER-CONTENTS-$TAG.txt" \
+        -f message=probe \
+        -f content="$(printf probe | base64 -w0)" \
+        -f branch=feature/issue-999999-worker
+
+    local pr pr_out pr_rc
+    pr_out="$(
+        broker_api \
+          -X POST \
+          "repos/$REPO_SLUG/pulls" \
+          -f title="CERTIFY $TAG (never merge)" \
+          -f head=feature/issue-999999-worker \
+          -f base=certify/main \
+          -F draft=true \
+          -f body="Identity certification probe. Never merged into main." \
+          --jq .number
+    )"
+    pr_rc=$?
+
+    if [ "$pr_rc" -eq 0 ] && [[ "$pr_out" =~ ^[0-9]+$ ]]; then
+        pr="$pr_out"
+        rec G4.7 PASS "the PR broker opens a draft PR" "#$pr"
+    elif infra_error "$pr_out"; then
+        rec G4.7 BLOCKED \
+          "the PR broker draft-PR probe hit infrastructure/network failure" \
+          "$pr_out"
+        pr=""
+    else
+        rec G4.7 FAIL \
+          "the PR broker could not open a draft PR" \
+          "$pr_out"
+        pr=""
+    fi
 
     # ---- G5: branches ------------------------------------------------------
     deny G5.2 "App pushes to main"                    app_git push -q "$URL" HEAD:refs/heads/main
@@ -152,13 +270,13 @@ cmd_run() {
     if [ -n "$pr" ]; then
         local node; node="$(app_api "repos/$REPO_SLUG/pulls/$pr" --jq .node_id)"
         deny G6.1 "App enables auto-merge"            app_api graphql -f query='mutation($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}' -f id="$node"
-        deny G6.2 "App approves its own PR"           app_api -X POST "repos/$REPO_SLUG/pulls/$pr/reviews" -f event=APPROVE
+        deny G6.2 "worker App approves the broker-authored worker PR"           app_api -X POST "repos/$REPO_SLUG/pulls/$pr/reviews" -f event=APPROVE
         owner_api graphql -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}' -f id="$node" >/dev/null
         [ "$(owner_api "repos/$REPO_SLUG/pulls/$pr" --jq .draft)" = false ] \
-            && deny G6.3 "App merges its ready, unapproved PR (REST)" app_api -X PUT "repos/$REPO_SLUG/pulls/$pr/merge" -f merge_method=merge \
+            && deny G6.3 "worker App merges the broker-authored ready PR (REST)" app_api -X PUT "repos/$REPO_SLUG/pulls/$pr/merge" -f merge_method=merge \
             || rec G6.3 BLOCKED "the owner could not mark #$pr ready; the merge test would test the draft state, not the identity" ""
-        deny G6.4 "App merges it (GraphQL)"           app_api graphql -f query='mutation($id:ID!){mergePullRequest(input:{pullRequestId:$id}){clientMutationId}}' -f id="$node"
-        deny G6.5 "App merges it as admin"            app_api graphql -f query='mutation($id:ID!){mergePullRequest(input:{pullRequestId:$id, mergeMethod:MERGE}){clientMutationId}}' -f id="$node"
+        deny G6.4 "worker App merges the broker-authored PR (GraphQL)"           app_api graphql -f query='mutation($id:ID!){mergePullRequest(input:{pullRequestId:$id}){clientMutationId}}' -f id="$node"
+        deny G6.5 "worker App merges the broker-authored PR as admin"            app_api graphql -f query='mutation($id:ID!){mergePullRequest(input:{pullRequestId:$id, mergeMethod:MERGE}){clientMutationId}}' -f id="$node"
         local can; can="$(app_api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){viewerCanMergeAsAdmin}}}' \
                -f o="${REPO_SLUG%/*}" -f r="${REPO_SLUG#*/}" -F n="$pr" --jq .data.repository.pullRequest.viewerCanMergeAsAdmin)"
         [ "$can" = false ] && rec G6.6 PASS "viewerCanMergeAsAdmin is false for the App" "$can" || rec G6.6 FAIL "the App can merge as admin" "$can"
@@ -169,31 +287,94 @@ cmd_run() {
     env -u GH_TOKEN git push -q origin HEAD:refs/heads/certify/owner-pr-$TAG 2>/dev/null
     local opr; opr="$(owner_api -X POST "repos/$REPO_SLUG/pulls" -f title="CERTIFY owner $TAG (never merge)" -f head="certify/owner-pr-$TAG" -f base=certify/main -f body="probe" --jq .number)"
     if [[ "$opr" =~ ^[0-9]+$ ]]; then
-        allow G6.7 "App may review the owner's PR (it is not the author)" app_api -X POST "repos/$REPO_SLUG/pulls/$opr/reviews" -f event=APPROVE
-        deny G6.8 "App merges the owner's PR on its own approval" app_api -X PUT "repos/$REPO_SLUG/pulls/$opr/merge" -f merge_method=merge
+        allow G6.7 "PR broker may review the owner's PR" broker_api -X POST "repos/$REPO_SLUG/pulls/$opr/reviews" -f event=APPROVE
+        deny G6.8 "PR broker merges the owner's PR on its own approval" broker_api -X PUT "repos/$REPO_SLUG/pulls/$opr/merge" -f merge_method=merge
     else rec G6.7 BLOCKED "no owner PR" "$opr"; rec G6.8 BLOCKED "no owner PR" "$opr"; fi
 
-    # Draft → Ready by the App is reverted (agent-ready-guard.yml).
-    git switch -q -c feature/issue-999997-worker origin/main; echo "ready $TAG" > READY.txt; git add READY.txt; git commit -q -m "test(agent): ready guard probe"
-    if app_git push -q "$URL" HEAD:refs/heads/feature/issue-999997-worker >/dev/null; then
-        local rpr rnode; rpr="$(app_api -X POST "repos/$REPO_SLUG/pulls" -f title="CERTIFY ready $TAG" -f head=feature/issue-999997-worker -f base=certify/main -F draft=true -f body=probe --jq .number)"
-        rnode="$(app_api "repos/$REPO_SLUG/pulls/$rpr" --jq .node_id)"
-        app_api graphql -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}' -f id="$rnode" >/dev/null
-        local d=false; for _ in $(seq 1 18); do sleep 10; d="$(owner_api "repos/$REPO_SLUG/pulls/$rpr" --jq .draft)"; [ "$d" = true ] && break; done
-        [ "$d" = true ] && rec G7.13 PASS "the App's Draft → Ready is reverted by the ready guard" "#$rpr back to draft" \
-                        || rec G7.13 FAIL "the App's PR stayed ready for review" "#$rpr"
-    else rec G7.13 BLOCKED "could not push the ready-guard probe" ""; fi
+    # ---- Draft / Ready boundary --------------------------------------------
+    if [ -n "$pr" ]; then
+        local rnode
+        rnode="$(broker_api "repos/$REPO_SLUG/pulls/$pr" --jq .node_id)"
+
+        deny G7.13a \
+            "worker App marks the worker PR ready for review" \
+            app_api graphql \
+            -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}' \
+            -f id="$rnode"
+
+        local ready_out ready_rc
+        ready_out="$(
+            broker_api graphql \
+              -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}' \
+              -f id="$rnode"
+        )"
+        ready_rc=$?
+
+        if [ "$ready_rc" -ne 0 ]; then
+            if infra_error "$ready_out"; then
+                rec G7.13b BLOCKED \
+                    "PR broker Ready probe hit infrastructure/network failure" \
+                    "$ready_out"
+            else
+                rec G7.13b FAIL \
+                    "PR broker could not exercise the Ready guard" \
+                    "$ready_out"
+            fi
+        else
+            local d=false poll_out=""
+
+            for _ in $(seq 1 18); do
+                sleep 10
+
+                poll_out="$(
+                    owner_api \
+                      "repos/$REPO_SLUG/pulls/$pr" \
+                      --jq .draft
+                )"
+
+                if infra_error "$poll_out"; then
+                    d=infra
+                    break
+                fi
+
+                d="$poll_out"
+
+                [ "$d" = true ] && break
+            done
+
+            if [ "$d" = true ]; then
+                rec G7.13b PASS \
+                    "PR broker's Draft → Ready is returned to Draft by the trusted guard" \
+                    "#$pr back to draft"
+            elif [ "$d" = infra ]; then
+                rec G7.13b BLOCKED \
+                    "Ready-guard observation hit infrastructure/network failure" \
+                    "$poll_out"
+            else
+                rec G7.13b FAIL \
+                    "broker-authored worker PR stayed Ready for review" \
+                    "#$pr"
+            fi
+        fi
+    else
+        rec G7.13a BLOCKED \
+            "no certification PR for worker Ready denial" \
+            ""
+        rec G7.13b BLOCKED \
+            "no certification PR for broker Ready guard" \
+            ""
+    fi
 
     # ---- G6: the owner keeps the final boundary -----------------------------
     if [ -n "$pr" ]; then
         owner_api -X POST "repos/$REPO_SLUG/pulls/$pr/reviews" -f event=APPROVE >/dev/null
-        allow G6.9 "the owner approves and merges the App's PR (into certify/main)" \
+        allow G6.9 "the owner approves and merges the broker-authored worker PR (into certify/main)" \
             owner_api -X PUT "repos/$REPO_SLUG/pulls/$pr/merge" -f merge_method=merge
     else rec G6.9 BLOCKED "no certification PR" ""; fi
 
     # ---- cleanup, as the owner ----------------------------------------------
-    local n; for n in $pr ${opr:-} ${rpr:-}; do owner_api -X PATCH "repos/$REPO_SLUG/pulls/$n" -f state=closed >/dev/null; done
-    for b in certify/main "certify/owner-pr-$TAG" feature/issue-999999-worker feature/issue-999998-worker feature/issue-999997-worker; do
+    local n; for n in $pr ${opr:-}; do owner_api -X PATCH "repos/$REPO_SLUG/pulls/$n" -f state=closed >/dev/null; done
+    for b in certify/main "certify/owner-pr-$TAG" feature/issue-999999-worker feature/issue-999998-worker; do
         owner_api -X DELETE "repos/$REPO_SLUG/git/refs/heads/$b" >/dev/null
     done
     [ "$(owner_api "repos/$REPO_SLUG/commits/main" --jq .sha)" = "$base" ] \

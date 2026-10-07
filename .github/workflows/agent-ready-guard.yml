@@ -1,20 +1,16 @@
-# Agent — a worker PR leaves draft only by the owner's hand.
+# Agent — a worker PR leaves Draft only by the owner's hand.
 #
-# Why this exists: the worker App needs `pull_requests: write` to open its
-# draft PR, and GitHub has no finer permission — the same grant lets it mark a
-# PR ready for review. No ruleset rule covers draft state. So this is a
-# compensating control, not a prevention: when anyone but the owner takes a
-# worker PR (`feature/issue-N-worker`) out of draft, it goes back to draft, and
-# the PR says who did it. Merging still needs the owner's code-owner approval
-# (ruleset), which is the boundary that cannot be crossed; this keeps Draft →
-# Ready an owner-only signal.
+# GitHub requires Pull requests:write both to create a Draft PR and to change
+# Draft/Ready state. The PR broker therefore technically has that capability.
+# The worker App itself has no Pull requests permission.
 #
-# `pull_request`, never `pull_request_target`: the workflow file comes from the
-# PR's own merge commit, and a worker branch cannot change a workflow — the App
-# has no `workflows` permission and agent-guard.sh refuses the path. A PR from
-# a fork runs with a read-only token and simply cannot revert anything.
-# GITHUB_TOKEN's own changes (agent-owner-merge.yml marking ready on the
-# owner's `@pliwee merge`) start no workflow, so that path is untouched.
+# This workflow is the compensating control for broker-originated Ready events.
+# It runs on a GitHub-hosted runner, executes no repository code and checks out
+# nothing. It mints a short-lived token for pliwee-pr-broker solely to return
+# the PR to Draft.
+#
+# Merge authorization does NOT depend on this workflow. The server-side
+# owner/admin-only protected-ref update rule is the final merge boundary.
 
 name: Agent · ready guard
 
@@ -24,7 +20,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   guard:
@@ -33,20 +28,45 @@ jobs:
       endsWith(github.head_ref, '-worker') &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.sender.login != github.repository_owner
+
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+
     env:
-      GH_TOKEN: ${{ github.token }}
       PR_ID: ${{ github.event.pull_request.node_id }}
       PR: ${{ github.event.pull_request.number }}
       WHO: ${{ github.event.sender.login }}
+
     steps:
-      - name: Back to draft
+      - name: Mint PR broker token
+        id: broker
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PLIWEE_PR_BROKER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PLIWEE_PR_BROKER_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+
+      - name: Back to Draft
+        env:
+          GH_TOKEN: ${{ steps.broker.outputs.token }}
         run: |
           set -eu
-          # shellcheck disable=SC2016  # $id is a GraphQL variable, not a shell one
-          d="$(gh api graphql -f query='mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
-              -f id="$PR_ID" --jq '.data.convertPullRequestToDraft.pullRequest.isDraft')"
-          [ "$d" = true ] || { echo "::error::could not return #$PR to draft: '$d'"; exit 1; }
-          gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body "Returned to draft: \`$WHO\` marked this worker PR ready for review, and only the repository owner may. (AGENT-WORKFLOW.md § Execution identity.)"
-          echo "::warning::$WHO marked worker PR #$PR ready; reverted to draft"
+
+          d="$(
+            gh api graphql \
+              -f query='mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
+              -f id="$PR_ID" \
+              --jq '.data.convertPullRequestToDraft.pullRequest.isDraft'
+          )"
+
+          [ "$d" = true ] || {
+            echo "::error::could not return #$PR to Draft: '$d'"
+            exit 1
+          }
+
+          gh pr comment \
+            "$PR" \
+            -R "$GITHUB_REPOSITORY" \
+            --body "Returned to Draft: \`$WHO\` marked this autonomous worker PR ready for review. Final review state and merge authorization remain with the repository owner."
+
+          echo "::warning::$WHO marked worker PR #$PR ready; reverted to Draft"
