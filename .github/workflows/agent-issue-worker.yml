@@ -1,45 +1,58 @@
-# Agent — the issue worker. OFF until the owner turns it on.
+# Agent — the issue worker.
 #
 # What it does
 # ------------
-# When the repository owner labels an issue `agent:ready`, a self-hosted runner
-# on the owner's Fedora host checks the issue mechanically
-# (.github/agent/agent-guard.sh), then runs Claude Code headless with the
-# pliwee-issue-worker skill, which reads the issue, judges its ADRs and SPECs,
-# implements, tests, reviews, pushes feature/issue-N-<slug> and opens a DRAFT
-# pull request. It never merges. The owner reviews and merges, or does not.
+# When the repository owner's account labels an issue `agent:ready` — the owner
+# by hand, or the night coordinator promoting an issue the owner queued — a
+# self-hosted runner on the owner's Fedora host checks the issue mechanically
+# (.github/agent/agent-guard.sh), writes an execution brief, and runs Claude
+# Code headless with the pliwee-issue-worker skill INSIDE A SANDBOX
+# (.github/agent/sandbox.sh) that holds no GitHub credential. Claude commits
+# locally in a throwaway clone. The trusted steps below take its work as a git
+# bundle into a clean clone, verify it with guard rails copied from main before
+# Claude started, push the branch and open a DRAFT pull request. It never
+# merges. The owner reviews and merges, or does not.
 #
-# Why it is off, and why it is self-hosted
-# ----------------------------------------
+# Switches
+# --------
 # * The job runs only when the repository variable PLIWEE_AGENT_WORKER is
-#   exactly `enabled`. Unset, it is skipped. (Phase C of
-#   docs/development/AGENT-WORKFLOW.md; Phases A and B come first.)
-# * It needs a runner labelled `pliwee-agent`, and none is registered.
+#   exactly `enabled`.
+# * It needs a runner labelled `pliwee-agent`.
 # * AGENTS.md § Git Authorship Policy: commits use the owner's configured
-#   identity — decided as Yuri C. Sismotto <yuri.sismotto@hotmail.com> — and
-#   carry no AI attribution. anthropics/claude-code-action@v1 sets
-#   `git config user.name/user.email` to its bot account in every mode, and its
-#   prompt asks for a Co-authored-by trailer — so that action is NOT used here.
-#   On the owner's host, git uses the identity the owner configured, the guard
-#   verifies it before and after, and nothing in this file sets one.
+#   identity — Yuri C. Sismotto <yuri.sismotto@hotmail.com> — and carry no AI
+#   attribution. anthropics/claude-code-action@v1 sets its own bot identity and
+#   asks for a Co-authored-by trailer, so it is NOT used here.
 #
-# Why it cannot be triggered by anyone else
-# -----------------------------------------
+# Who can start it
+# ----------------
 # * The only trigger is `issues: labeled`. No pull_request, pull_request_target,
-#   issue_comment or workflow_run event can reach this self-hosted runner, so
-#   code from a fork never runs on it.
-# * The job requires the label to be `agent:ready` AND the person who applied it
-#   to be the repository owner; the guard then requires the issue to have been
-#   opened, and last edited, by the owner.
+#   issue_comment or workflow_run event reaches this self-hosted runner.
+# * The label must be `agent:ready` and its sender the repository owner's
+#   account; the guard then requires the issue to be the owner's, or a derived
+#   issue the trusted coordinator created that still passes derive-check.
 #
-# Credentials
-# -----------
-# GITHUB_TOKEN (below: issues:write, contents:read) is used only for labels and
-# comments. The push and the draft PR use the runner account's own gh login — a
-# fine-grained token the owner created for this repository, with contents,
-# pull requests and issues write and NO workflows or administration permission.
-# That is also why the PR's checks run: a push made with GITHUB_TOKEN would not
-# trigger CI at all.
+# Credentials — the boundary
+# --------------------------
+# * Claude: none. sandbox.sh clears the environment, hides the gh login, the
+#   runner's directory, keyrings and ssh material, and gives Claude its own PID
+#   namespace, so the runner's memory and environment are out of reach. Its
+#   probe runs first in the same sandbox and the command does not start unless
+#   it passes. Everything Claude needs from GitHub is in the brief.
+# * GITHUB_TOKEN (issues: write, contents: read, actions: read): labels,
+#   comments, the ledger. It cannot push or merge. Writes made with it start no
+#   workflow.
+# * The execution identity — PLIWEE_WORKER_IDENTITY:
+#   - `app`: the pliwee-worker GitHub App. Short-lived installation tokens are
+#     minted right before the step that needs them, down-scoped per step
+#     (push + PR: contents and pull requests; promotion: issues), and revoked
+#     at the end of the job. The private key is a secret of the `agent-worker`
+#     environment, referenced only by the minting steps — never by the Claude
+#     step, which runs in its own PID namespace and could not read the runner's
+#     memory if it tried. With `app`, nothing falls back to the runner's own gh
+#     login: a missing token fails the step.
+#   - anything else (legacy): the runner account's own gh login — the owner's
+#     account, which can merge. The night session refuses to run in this mode.
+#   AGENT-WORKFLOW.md § Execution identity.
 
 name: Agent · issue worker
 
@@ -50,6 +63,7 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: read
 
 concurrency:
   group: agent-issue-${{ github.event.issue.number }}
@@ -60,14 +74,20 @@ jobs:
     if: >-
       vars.PLIWEE_AGENT_WORKER == 'enabled' &&
       github.event.label.name == 'agent:ready' &&
-      github.event.sender.login == github.repository_owner &&
+      (github.event.sender.login == github.repository_owner ||
+       (vars.PLIWEE_WORKER_APP_BOT != '' && github.event.sender.login == vars.PLIWEE_WORKER_APP_BOT)) &&
       github.event.issue.pull_request == null
     runs-on: [self-hosted, linux, pliwee-agent]
-    timeout-minutes: 180
+    environment: agent-worker
+    timeout-minutes: 240
     env:
       ISSUE: ${{ github.event.issue.number }}
       PLIWEE_REPO: ${{ github.repository }}
       PLIWEE_AGENT_BASE: origin/main
+      PLIWEE_AGENT_NIGHT: ${{ vars.PLIWEE_AGENT_NIGHT }}
+      PLIWEE_AGENT_SANDBOX: required
+      PLIWEE_WORKER_IDENTITY: ${{ vars.PLIWEE_WORKER_IDENTITY || 'owner-login' }}
+      PLIWEE_WORKER_APP_BOT: ${{ vars.PLIWEE_WORKER_APP_BOT }}
       MAX_TURNS: ${{ vars.PLIWEE_AGENT_MAX_TURNS || '200' }}
       MAX_BUDGET_USD: ${{ vars.PLIWEE_AGENT_MAX_BUDGET_USD || '25' }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -77,11 +97,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # PLIWEE_OWNER_NAME / _EMAIL / _LOGIN come from the runner's own .env,
-      # written by the owner: Yuri C. Sismotto <yuri.sismotto@hotmail.com>
-      # (owner decision, 2026-10-04). The guard fails if any is missing.
-      # An environment that cannot commit as the owner does not commit at all:
-      # it reports BLOCKED, and nothing is repaired.
+      # PLIWEE_OWNER_NAME / _EMAIL / _LOGIN come from the runner's own .env.
+      # An environment that cannot commit as the owner does not commit at all.
       - name: Identity — the owner's, or BLOCKED
         id: identity
         env:
@@ -105,10 +122,8 @@ jobs:
           gh issue comment "$ISSUE" -R "$PLIWEE_REPO" --body-file "$RUNNER_TEMP/identity.md" || true
           exit 1
 
-      # The guard rails the worker is held to are copied out of the checkout
-      # before Claude starts, from main as checked out above. The hooks and the
-      # verification below run that copy, so an edit to .github/agent/** in the
-      # working tree — or on the pushed branch — cannot change what judges it.
+      # Every script the rest of this job runs is this copy, taken from main
+      # before anything the worker wrote exists.
       - name: Take a trusted copy of the guard rails
         run: |
           set -eu
@@ -116,19 +131,16 @@ jobs:
           rm -rf "$t"; mkdir -p "$t/.github" "$t/packaging/tests/lib"
           cp -a .github/agent "$t/.github/agent"
           cp -a packaging/tests/lib/assert.sh "$t/packaging/tests/lib/assert.sh"
-          echo "GUARD=$t/.github/agent/agent-guard.sh" >> "$GITHUB_ENV"
-
-      # A hooksPath that does not exist makes git run no hook at all, silently.
-      # So the path is checked, not assumed.
-      - name: Install the worker's git hooks in this checkout only
-        run: |
-          set -eu
-          git config core.hooksPath "$RUNNER_TEMP/trusted/.github/agent/hooks"
-          for h in commit-msg pre-push; do
-              f="$(git config core.hooksPath)/$h"
-              [ -x "$f" ] || { echo "::error::$f is missing or not executable; git would skip it silently"; exit 1; }
-              echo "  ok    $f"
-          done
+          {
+              echo "TRUSTED=$t"
+              echo "GUARD=$t/.github/agent/agent-guard.sh"
+              echo "COORD=$t/.github/agent/coordinator.sh"
+              echo "SANDBOX=$t/.github/agent/sandbox.sh"
+          echo "PIPE=$t/.github/agent/worker-pipeline.sh"
+              echo "WORK=$RUNNER_TEMP/work"
+              echo "OUTBOX=$RUNNER_TEMP/outbox"
+              echo "PUB=$RUNNER_TEMP/publish"
+          } >> "$GITHUB_ENV"
 
       - name: Dependency gate — the mechanical half
         id: gate
@@ -136,7 +148,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set +e
-          out="$(./.github/agent/agent-guard.sh issue "$ISSUE" 2>&1)"; rc=$?
+          out="$("$GUARD" issue "$ISSUE" 2>&1)"; rc=$?
           set -e
           printf '%s\n' "$out"
           if [ "$rc" -eq 3 ]; then
@@ -149,216 +161,218 @@ jobs:
               } > "$RUNNER_TEMP/blocked.md"
               gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:blocked --remove-label agent:ready
               gh issue comment "$ISSUE" -R "$PLIWEE_REPO" --body-file "$RUNNER_TEMP/blocked.md"
-              echo "ready=false" >> "$GITHUB_OUTPUT"
+              echo "ready=false" >> "$GITHUB_OUTPUT"; echo "result=blocked" >> "$GITHUB_OUTPUT"
           elif [ "$rc" -eq 0 ]; then
-              echo "ready=true" >> "$GITHUB_OUTPUT"
+              echo "ready=true" >> "$GITHUB_OUTPUT"; echo "result=ok" >> "$GITHUB_OUTPUT"
           else
+              echo "result=error" >> "$GITHUB_OUTPUT"
               echo "::error::the gate could not measure the issue (exit $rc)"; exit 1
           fi
 
+      # The lock: the label, and a bot-written comment naming this run, which
+      # the coordinator reads to tell a live lock from a stale one.
       - name: Claim the issue
+        id: claim
         if: steps.gate.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -eu
           gh issue edit "$ISSUE" -R "$PLIWEE_REPO" \
-              --add-label agent:working --remove-label agent:ready --remove-label agent:blocked
+              --add-label agent:working --remove-label agent:ready --remove-label agent:blocked --remove-label agent:queued
+          "$COORD" lock "$ISSUE" "$GITHUB_RUN_ID"
 
-      # The trusted workflow owns branch creation. Claude receives an already
-      # checked-out issue branch and never creates/switches branches itself.
-      - name: Prepare local issue branch
+      # A fresh clone from GitHub, never the runner's workspace, so nothing a
+      # previous run left in a .git/config reaches this one. Unauthenticated:
+      # the repository is public, and this clone never pushes.
+      # A fresh clone from GitHub, never the runner's workspace, so nothing a
+      # previous run left in a .git/config reaches this one. Unauthenticated:
+      # the repository is public, and this clone never pushes.
+      - name: Prepare the work copy
+        id: prepare
         if: steps.gate.outputs.ready == 'true'
         run: |
           set -eu
-          branch="feature/issue-$ISSUE-worker"
+          base="$("$PIPE" prepare "$ISSUE" | tail -1)"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "branch=feature/issue-$ISSUE-worker" >> "$GITHUB_OUTPUT"
+      - name: Write the execution brief
+        if: steps.prepare.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRIEF_MAIN_SHA: ${{ steps.prepare.outputs.base }}
+        run: |
+          set -eu
+          gh api "repos/$PLIWEE_REPO/issues/$ISSUE" > "$RUNNER_TEMP/issue-raw.json"
+          gh api --paginate "repos/$PLIWEE_REPO/issues/$ISSUE/comments?per_page=100" | jq -s 'add // []' > "$RUNNER_TEMP/comments-raw.json"
+          jq --slurpfile c "$RUNNER_TEMP/comments-raw.json" --arg owner "$PLIWEE_OWNER_LOGIN" '
+              {number, title, body: (.body // ""), author: .user.login, labels: [.labels[].name],
+               comments: [$c[0][] | {author: .user.login, trusted: (.user.login == $owner), body}]}' \
+              "$RUNNER_TEMP/issue-raw.json" > "$RUNNER_TEMP/issue.json"
+          session="$("$COORD" ledger)"
+          BRIEF_LEDGER="$session" BRIEF_SESSION="$(jq -r 'if length > 0 then "night session" else "none (single issue)" end' <<<"$session")" \
+          BRIEF_ATTEMPT="$(jq --argjson n "$ISSUE" '[.[] | select(.event == "promote" and .issue == $n)] | length | if . == 0 then 1 else . end' <<<"$session")" \
+              "$COORD" brief "$RUNNER_TEMP/issue.json" "$OUTBOX/brief.md"
 
-          git fetch -q origin main
-
-          if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
-              echo "::error::origin/$branch already exists; refusing to reuse or rewrite it"
-              exit 1
-          fi
-
-          git switch -c "$branch" origin/main
-          "$GUARD" branch "$ISSUE"
-          echo "Prepared local branch: $branch"
-
-      # GH_TOKEN is deliberately absent: Claude, git and gh use the runner
-      # account's own login, so the push triggers CI.
-      - name: Work the issue — Claude Code, headless
-        if: steps.gate.outputs.ready == 'true'
+      # The command runs only if the sandbox's probe passes inside it.
+      - name: Work the issue — Claude Code, headless, sandboxed
+        if: steps.prepare.outcome == 'success'
         id: work
         run: |
-          claude -p "/pliwee-issue-worker $ISSUE" \
-              --settings .github/agent/claude-settings.json \
-              --max-turns "$MAX_TURNS" \
-              --max-budget-usd "$MAX_BUDGET_USD" \
-              --output-format json \
+          set -eu
+          PLIWEE_AGENT_BRIEF="$OUTBOX/brief.md" PLIWEE_AGENT_OUTBOX="$OUTBOX" \
+          "$SANDBOX" run --work "$WORK" --outbox "$OUTBOX" -- \
+              claude -p "/pliwee-issue-worker $ISSUE" \
+                  --settings /tmp/.pliwee-sandbox/.github/agent/claude-settings.json \
+                  --add-dir "$OUTBOX" \
+                  --max-turns "$MAX_TURNS" \
+                  --max-budget-usd "$MAX_BUDGET_USD" \
+                  --output-format json \
               < /dev/null > "$RUNNER_TEMP/claude-result.json"
           jq '{terminal_reason, num_turns, total_cost_usd, permission_denials: [.permission_denials[]?.tool_input.command]}' \
               "$RUNNER_TEMP/claude-result.json"
 
-      # The skill labels the issue agent:blocked itself when its judgement half
-      # of the dependency gate stops it (an ADR not accepted, a SPEC missing).
-      # That is an outcome, not a failure: no branch is expected.
-      - name: Did the worker stop on a blocker?
-        if: steps.gate.outputs.ready == 'true'
-        id: worker
+      # Also in the sandbox: git runs in the work copy only where nothing can
+      # be stolen. What leaves is a bundle — objects and one ref, no config.
+      # Also in the sandbox: git runs in the work copy only where nothing can
+      # be stolen. What leaves is a bundle — objects and one ref, no config.
+      - name: Bundle the work
+        if: always() && steps.prepare.outcome == 'success'
+        id: bundle
+        run: |
+          if "$PIPE" bundle "$ISSUE"; then echo "made=true" >> "$GITHUB_OUTPUT"
+          else echo "made=false" >> "$GITHUB_OUTPUT"; echo "no commit to bundle"; fi
+      - name: Read the worker's report
+        if: always() && steps.prepare.outcome == 'success'
+        id: report
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          labels="$(gh issue view "$ISSUE" -R "$PLIWEE_REPO" --json labels --jq '[.labels[].name] | join(" ")')"
-          echo "labels now: $labels"
-          if [[ " $labels " == *" agent:blocked "* ]]; then
-              gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --remove-label agent:working
-              echo "blocked=true" >> "$GITHUB_OUTPUT"
-          else
-              echo "blocked=false" >> "$GITHUB_OUTPUT"
+          st="$OUTBOX/status.json"; outcome=""
+          if [ -f "$st" ] && [ "$(wc -c < "$st")" -le 65536 ] && jq -e 'type == "object" and (.outcome | type) == "string"' "$st" >/dev/null 2>&1; then
+              outcome="$(jq -r .outcome "$st")"
           fi
+          case "$outcome" in done|blocked|owner-decision|failed) ;; *) outcome="" ;; esac
+          echo "reported=$outcome" >> "$GITHUB_OUTPUT"
+          if [ -f "$OUTBOX/comment.md" ] || [ -f "$st" ]; then
+              {
+                  echo "**Worker report — written by the model, not verified by this workflow.** Run: $RUN_URL"
+                  echo
+                  [ -f "$st" ] && { echo '```json'; head -c 8000 "$st"; echo; echo '```'; echo; }
+                  [ -f "$OUTBOX/comment.md" ] && head -c 50000 "$OUTBOX/comment.md"
+              } | sed 's/<!--/\&lt;!--/g' > "$RUNNER_TEMP/worker-report.md"   # no marker the coordinator reads can come from the model
+              gh issue comment "$ISSUE" -R "$PLIWEE_REPO" --body-file "$RUNNER_TEMP/worker-report.md"
+          fi
+          case "$outcome" in
+              blocked)        gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:blocked --remove-label agent:working ;;
+              owner-decision) gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:owner-decision --remove-label agent:working ;;
+          esac
 
-      # Claude produces local commits only. Publication happens only after
-      # the trusted workflow validates the resulting branch.
-      - name: Verify local work before publication
-        if: steps.gate.outputs.ready == 'true' && steps.worker.outputs.blocked == 'false'
+      # A clean clone, its hooks the trusted copy's, the bundle fetched into
+      # it. No checkout: the guard reads refs and trees, so no file the worker
+      # wrote is ever materialised outside the sandbox before it is verified.
+      # A clean clone, its hooks the trusted copy's, the bundle fetched into
+      # it. No checkout, and no git command in the work copy: the planted
+      # configuration cases in worker-pipeline.sh --selftest are why.
+      - name: Verify the work in a clean clone
+        if: steps.bundle.outputs.made == 'true' && steps.report.outputs.reported != 'blocked' && steps.report.outputs.reported != 'owner-decision'
         id: local_verify
-        run: |
-          set -eu
+        run: '"$PIPE" verify "$ISSUE" "${{ steps.prepare.outputs.base }}"'
+      # Minted only now — after the model has exited and its work is verified —
+      # and scoped to what publication needs. Never in the environment of any
+      # step that runs model output.
+      - name: Mint the publisher token (GitHub App)
+        if: steps.local_verify.outcome == 'success' && env.PLIWEE_WORKER_IDENTITY == 'app'
+        id: app_pub
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PLIWEE_WORKER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PLIWEE_WORKER_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
 
-          branch="$(git branch --show-current)"
-
-          "$GUARD" branch "$ISSUE"
-          "$GUARD" commits "$PLIWEE_AGENT_BASE"
-          "$GUARD" paths "$PLIWEE_AGENT_BASE"
-          git diff --check "$PLIWEE_AGENT_BASE"...HEAD
-
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
-          echo "  ok    local result verified: $branch"
-
-      - name: Push verified branch
+      - name: Execution identity — the App's, or nothing is published
         if: steps.local_verify.outcome == 'success'
+        id: exec
+        env:
+          APP_TOKEN: ${{ steps.app_pub.outputs.token }}
+          APP_SLUG: ${{ steps.app_pub.outputs.app-slug }}
         run: |
           set -eu
-          branch="${{ steps.local_verify.outputs.branch }}"
+          if [ "$PLIWEE_WORKER_IDENTITY" != app ]; then
+              echo "::warning::legacy identity: publishing with the runner's own gh login (the owner's account, which can merge). The night session refuses this mode."
+              echo "login=" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          [ -n "$APP_TOKEN" ] || { echo "::error::PLIWEE_WORKER_IDENTITY=app and no App token: refusing to fall back to any other credential"; exit 1; }
+          [ "${APP_SLUG}[bot]" = "$PLIWEE_WORKER_APP_BOT" ] \
+              || { echo "::error::the token belongs to '${APP_SLUG}[bot]', PLIWEE_WORKER_APP_BOT says '$PLIWEE_WORKER_APP_BOT'"; exit 1; }
+          repos="$(GH_TOKEN="$APP_TOKEN" gh api /installation/repositories --jq '[.repositories[].full_name] | join(",")')"
+          [ "$repos" = "$PLIWEE_REPO" ] || { echo "::error::the App's installation reaches '$repos', not exactly $PLIWEE_REPO"; exit 1; }
+          echo "  ok    publishing as $PLIWEE_WORKER_APP_BOT, installed on $PLIWEE_REPO only"
+          echo "login=$PLIWEE_WORKER_APP_BOT" >> "$GITHUB_OUTPUT"
 
-          git push -u origin "$branch"
-
-          local_sha="$(git rev-parse HEAD)"
-          remote_sha="$(git ls-remote --heads origin "refs/heads/$branch" | awk '{print $1}')"
-
-          [ -n "$remote_sha" ] || {
-              echo "::error::branch was not published"
-              exit 1
-          }
-
-          [ "$local_sha" = "$remote_sha" ] || {
-              echo "::error::remote branch differs from validated local HEAD"
-              exit 1
-          }
-
-          echo "  ok    published $branch at $local_sha"
-
+      - name: Push the verified branch
+        if: steps.exec.outcome == 'success'
+        id: push
+        env:
+          PLIWEE_PUSH_TOKEN: ${{ steps.app_pub.outputs.token }}
+        run: '"$PIPE" push "$ISSUE"'
       - name: Open Draft PR
-        if: steps.local_verify.outcome == 'success'
+        if: steps.push.outcome == 'success'
         id: publish
+        env:
+          APP_TOKEN: ${{ steps.app_pub.outputs.token }}
         run: |
           set -eu
-
-          branch="${{ steps.local_verify.outputs.branch }}"
-          title="$(gh issue view "$ISSUE" -R "$PLIWEE_REPO" --json title --jq '.title')"
-
+          if [ "$PLIWEE_WORKER_IDENTITY" = app ]; then export GH_TOKEN="$APP_TOKEN"; fi
+          b="${{ steps.prepare.outputs.branch }}"
+          title="$(jq -r .title "$RUNNER_TEMP/issue.json")"
           {
               printf '<!-- pliwee-agent-issue:%s -->\n\n' "$ISSUE"
               printf 'Implements #%s\n\n' "$ISSUE"
               echo '## Autonomous worker handoff'
               echo
-              echo 'Claude implemented, tested and committed locally.'
-              echo 'The trusted workflow validated the commit and published it.'
+              echo 'Claude implemented, tested and committed in a sandbox with no GitHub credential.'
+              echo 'The trusted workflow verified the commits from a bundle in a clean clone and published them.'
+              echo 'The worker report is on the issue; it is the model'"'"'s own account, not a measurement.'
               echo
               echo 'This PR intentionally remains a Draft. The worker never authorizes its own merge.'
+              # shellcheck disable=SC2016  # the backticks are Markdown
               echo 'After review, only the repository owner may authorize finalization by commenting `@pliwee merge` on this PR.'
           } > "$RUNNER_TEMP/pr-body.md"
-
-          existing="$(gh pr list -R "$PLIWEE_REPO" \
-              --head "$branch" \
-              --state open \
-              --json number \
-              --jq 'length')"
-
-          [ "$existing" = 0 ] || {
-              echo "::error::an open PR already exists for $branch"
-              exit 1
-          }
-
-          url="$(gh pr create \
-              -R "$PLIWEE_REPO" \
-              --draft \
-              --base main \
-              --head "$branch" \
-              --title "$title" \
-              --body-file "$RUNNER_TEMP/pr-body.md")"
-
-          printf '%s\n' "$url"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
+          existing="$(gh pr list -R "$PLIWEE_REPO" --head "$b" --state open --json number --jq 'length')"
+          [ "$existing" = 0 ] || { echo "::error::an open PR already exists for $b"; exit 1; }
+          url="$(gh pr create -R "$PLIWEE_REPO" --draft --base main --head "$b" --title "$title" --body-file "$RUNNER_TEMP/pr-body.md")"
+          printf '%s\n' "$url"; echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Verify published handoff
         if: steps.publish.outcome == 'success'
         id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXEC_LOGIN: ${{ steps.exec.outputs.login }}
         run: |
           set -eu
-
-          branch="${{ steps.local_verify.outputs.branch }}"
-          git fetch -q origin "$branch"
-
-          [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$branch")" ] || {
-              echo "::error::published branch differs from validated local HEAD"
-              exit 1
-          }
-
-          "$GUARD" branch "$ISSUE"
-          "$GUARD" commits "$PLIWEE_AGENT_BASE"
-          "$GUARD" paths "$PLIWEE_AGENT_BASE"
-
-          pr="$(gh pr list -R "$PLIWEE_REPO" \
-              --head "$branch" \
-              --state all \
-              --json number,isDraft,state,body,autoMergeRequest,baseRefName)"
-
-          jq -e 'length == 1' <<<"$pr" >/dev/null || {
-              echo "::error::expected exactly one PR for $branch: $pr"
-              exit 1
-          }
-
-          jq -e '.[0].state == "OPEN" and .[0].isDraft == true' <<<"$pr" >/dev/null || {
-              echo "::error::PR is not an open Draft"
-              exit 1
-          }
-
-          jq -e '.[0].autoMergeRequest == null' <<<"$pr" >/dev/null || {
-              echo "::error::auto-merge is enabled"
-              exit 1
-          }
-
-          jq -e '.[0].baseRefName == "main"' <<<"$pr" >/dev/null || {
-              echo "::error::PR does not target main"
-              exit 1
-          }
-
-          jq -e --arg n "$ISSUE" \
-              '.[0].body | test("Implements #" + $n + "([^0-9]|$)")' \
-              <<<"$pr" >/dev/null || {
-              echo "::error::PR body does not reference Implements #$ISSUE"
-              exit 1
-          }
-
-          jq -e --arg n "$ISSUE" \
-              '.[0].body | contains("<!-- pliwee-agent-issue:" + $n + " -->")' \
-              <<<"$pr" >/dev/null || {
-              echo "::error::PR body does not carry the trusted issue marker"
-              exit 1
-          }
-
-          echo "  ok    $branch published as one open Draft PR to main"
+          b="${{ steps.prepare.outputs.branch }}"
+          git -C "$PUB" fetch -q origin "$b"
+          [ "$(git -C "$PUB" rev-parse "refs/heads/$b")" = "$(git -C "$PUB" rev-parse "origin/$b")" ] \
+              || { echo "::error::published branch differs from the verified HEAD"; exit 1; }
+          pr="$(gh pr list -R "$PLIWEE_REPO" --head "$b" --state all --json number,isDraft,state,body,autoMergeRequest,baseRefName,author)"
+          if [ -n "$EXEC_LOGIN" ]; then
+              jq -e --arg a "${EXEC_LOGIN%\[bot\]}" '.[0].author.login == $a or .[0].author.login == ("app/" + $a)' <<<"$pr" >/dev/null \
+                  || { echo "::error::the PR was not opened by the execution identity $EXEC_LOGIN: $(jq -r '.[0].author.login' <<<"$pr")"; exit 1; }
+          fi
+          jq -e 'length == 1' <<<"$pr" >/dev/null || { echo "::error::expected exactly one PR for $b: $pr"; exit 1; }
+          jq -e '.[0].state == "OPEN" and .[0].isDraft == true' <<<"$pr" >/dev/null || { echo "::error::PR is not an open Draft"; exit 1; }
+          jq -e '.[0].autoMergeRequest == null' <<<"$pr" >/dev/null || { echo "::error::auto-merge is enabled"; exit 1; }
+          jq -e '.[0].baseRefName == "main"' <<<"$pr" >/dev/null || { echo "::error::PR does not target main"; exit 1; }
+          jq -e --arg n "$ISSUE" '.[0].body | test("Implements #" + $n + "([^0-9]|$)")' <<<"$pr" >/dev/null \
+              || { echo "::error::PR body does not reference Implements #$ISSUE"; exit 1; }
+          jq -e --arg n "$ISSUE" '.[0].body | contains("<!-- pliwee-agent-issue:" + $n + " -->")' <<<"$pr" >/dev/null \
+              || { echo "::error::PR body does not carry the trusted issue marker"; exit 1; }
+          echo "pr=$(jq -r '.[0].number' <<<"$pr")" >> "$GITHUB_OUTPUT"
+          echo "  ok    $b published as one open Draft PR to main"
 
       - name: Hand over to the owner
         if: steps.verify.outcome == 'success'
@@ -366,30 +380,115 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:review --remove-label agent:working
 
+      # In a night session a result is PASS only once CI has passed on the PR;
+      # the wait bounds how long. A single run hands over without waiting.
+      - name: Wait for CI (night session only)
+        if: steps.verify.outcome == 'success'
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.verify.outputs.pr }}
+        run: |
+          set -u
+          if [ "$("$COORD" ledger | jq length)" = 0 ]; then echo "result=skipped" >> "$GITHUB_OUTPUT"; exit 0; fi
+          wait_min="$(gh api "repos/$PLIWEE_REPO/issues?labels=agent:session&state=open" --jq '.[0].body' \
+              | grep -oE '<!-- pliwee-session \{.*\} -->' | sed -E 's/^<!-- pliwee-session //; s/ -->$//' | jq -r '.limits.ci_wait_minutes // 45')"
+          deadline=$(( $(date +%s) + wait_min * 60 ))
+          result=pending
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+              checks="$(gh pr checks "$PR" -R "$PLIWEE_REPO" --json name,bucket 2>/dev/null || echo '[]')"
+              req_ok=true; req_missing=false
+              for r in rust-workspace harness-selftests; do
+                  jq -e --arg r "$r" 'any(.[]; .name == $r)' <<<"$checks" >/dev/null || req_missing=true
+              done
+              if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' <<<"$checks" >/dev/null; then result=fail; break; fi
+              if [ "$req_missing" = false ] && jq -e 'length > 0 and all(.[]; .bucket == "pass" or .bucket == "skipping")' <<<"$checks" >/dev/null; then
+                  for r in rust-workspace harness-selftests; do
+                      jq -e --arg r "$r" 'any(.[]; .name == $r and .bucket == "pass")' <<<"$checks" >/dev/null || req_ok=false
+                  done
+                  [ "$req_ok" = true ] && { result=pass; break; }
+              fi
+              sleep 60
+          done
+          [ "$result" = pending ] && [ "${req_missing:-true}" = true ] && result=missing
+          printf '%s\n' "$checks" > "$RUNNER_TEMP/checks.json"
+          echo "CI: $result"; echo "result=$result" >> "$GITHUB_OUTPUT"
+
+      - name: Turn proposals into issues
+        if: always() && steps.prepare.outcome == 'success' && steps.local_verify.outcome != 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if compgen -G "$OUTBOX/derived/*.md" >/dev/null || compgen -G "$OUTBOX/decision/*.md" >/dev/null; then
+              "$COORD" derive "$ISSUE" "$OUTBOX"
+          else echo "no proposals"; fi
+
       - name: Record the failure
         if: failure() && steps.identity.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           OUT_GATE: ${{ steps.gate.outcome }}
           OUT_WORK: ${{ steps.work.outcome }}
-          OUT_VERIFY: ${{ steps.verify.outcome }}
+          OUT_VERIFY: ${{ steps.local_verify.outcome }}
+          OUT_PUBLISH: ${{ steps.verify.outcome }}
         run: |
-          git fetch -q origin || true
-          branches="$(git for-each-ref --format='%(refname:strip=3) %(objectname:short)' "refs/remotes/origin/feature/issue-$ISSUE-*")"
+          branches="$(git ls-remote --heads "https://github.com/$PLIWEE_REPO.git" "refs/heads/feature/issue-$ISSUE-*" | awk '{print $2" "substr($1,1,9)}')"
           {
               echo "FAILED — the issue worker stopped. Nothing was merged, and the PR, if any, stays a draft."
               echo
               echo "| Step | Outcome |"
               echo "| --- | --- |"
               echo "| dependency gate | ${OUT_GATE:-not run} |"
-              echo "| Claude Code worker | ${OUT_WORK:-not run} |"
-              echo "| verification of what was pushed | ${OUT_VERIFY:-not run} |"
+              echo "| Claude Code worker (sandboxed) | ${OUT_WORK:-not run} |"
+              echo "| verification in a clean clone | ${OUT_VERIFY:-not run} |"
+              echo "| publication | ${OUT_PUBLISH:-not run} |"
               echo
               echo "Branch and last commit: ${branches:-none pushed}"
               echo
               echo "Evidence — the failing step's log: $RUN_URL"
-              echo
-              echo "No automatic retry. Re-apply \`agent:ready\` once the cause is understood."
           } > "$RUNNER_TEMP/failed.md"
           gh issue edit "$ISSUE" -R "$PLIWEE_REPO" --add-label agent:failed --remove-label agent:working || true
           gh issue comment "$ISSUE" -R "$PLIWEE_REPO" --body-file "$RUNNER_TEMP/failed.md" || true
+
+      # Classify, ledger, and — in a night session — choose the next issue.
+      # Runs whatever happened above once the gate was reached; the tick stops
+      # the session on any fatal class, so a failure here never chains on.
+      - name: Mint the promotion token (GitHub App)
+        if: always() && env.PLIWEE_WORKER_IDENTITY == 'app' && steps.identity.outcome == 'success'
+        id: app_tick
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PLIWEE_WORKER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PLIWEE_WORKER_APP_PRIVATE_KEY }}
+          permission-issues: write
+
+      - name: Record the result and continue the session
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLIWEE_EXEC_TOKEN: ${{ steps.app_tick.outputs.token }}
+          OUT_IDENTITY: ${{ steps.identity.outcome }}
+          OUT_GATE: ${{ steps.gate.outputs.result || 'error' }}
+          OUT_WORK: ${{ steps.work.outcome }}
+          OUT_REPORTED: ${{ steps.report.outputs.reported }}
+          OUT_VERIFY: ${{ steps.local_verify.outcome }}
+          OUT_PUBLISH: ${{ steps.verify.outcome }}
+          OUT_CI: ${{ steps.ci.outputs.result }}
+        run: |
+          set -u
+          [ -n "${COORD:-}" ] || { echo "::error::no trusted copy; nothing can be recorded"; exit 1; }
+          class="$("$COORD" classify)"
+          jq -n --arg g0 "${OUT_VERIFY}" --arg ci "${OUT_CI:-not run}" '{
+              G0_repository_integrity: (if $g0 == "success" then "PASS" elif $g0 == "skipped" or $g0 == "" then "NOT_RUN" else "FAIL" end),
+              G5_guard: (if $g0 == "success" then "PASS" elif $g0 == "skipped" or $g0 == "" then "NOT_RUN" else "FAIL" end),
+              G8_evidence_integrity: (if $g0 == "success" then "PASS" elif $g0 == "skipped" or $g0 == "" then "NOT_RUN" else "FAIL" end),
+              G1_G4_G7_ci: ({"pass":"PASS","fail":"FAIL","pending":"NOT_RUN","missing":"FAIL"}[$ci] // "NOT_RUN"),
+              G6_platform: "BLOCKED_ENVIRONMENT"}' > "$RUNNER_TEMP/gates.json"
+          echo "class: $class"; cat "$RUNNER_TEMP/gates.json"
+          "$COORD" record "$ISSUE" "$class" "$RUNNER_TEMP/gates.json"
+          "$COORD" tick
+
+      - name: Remove the work copy
+        if: always()
+        run: rm -rf "${WORK:-/nonexistent}" "${OUTBOX:-/nonexistent}" "${PUB:-/nonexistent}"

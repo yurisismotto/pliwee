@@ -41,7 +41,10 @@ Fedora host with the suites running side by side, so they are upper bounds.
 | systemd unit | `systemd-analyze verify packaging/common/pliweed.service` | `packaging-checks.yml` | |
 | Dependency advisories | `cargo audit --deny warnings` | `security-audit.yml` | also scheduled |
 | Release artifact build | bundle, RPM, DEB, SBOM | `release-artifacts.yml` | builds; signing only with the key |
-| Agent guard rails | `./.github/agent/agent-guard.sh --selftest` | `agent-guard.yml`, `harness-selftests.yml` | 58 passed, 0 failed, 6 s |
+| Agent guard rails | `./.github/agent/agent-guard.sh --selftest` | `agent-guard.yml`, `harness-selftests.yml` | 58 passed, 0 failed, 6 s; 68 on 2026-10-07 with derived-issue and protected-path cases |
+| Night coordinator | `./.github/agent/coordinator.sh --selftest` | `agent-guard.yml`, `harness-selftests.yml` | added 2026-10-07: 77 passed, 0 failed — selection, locks, limits, stop conditions, classification, derived-issue checks, the brief, and `tick` against a fake GitHub; every check mutation-tested |
+| Worker sandbox | `./.github/agent/sandbox.sh --selftest` | `agent-guard.yml` (lifts Ubuntu's AppArmor user-namespace restriction for the job) | added 2026-10-07: 12 passed, 0 failed; needs `bwrap` |
+| Worker publication path | `./.github/agent/worker-pipeline.sh --selftest` | `agent-guard.yml` | added 2026-10-07: 15 passed, 0 failed — offline end to end, hostile workers included; needs `bwrap` |
 | Coordinator self-tests | `./packaging/tests/pre-g8-manual-gates-selftests.sh` | inside `harness-selftests.sh`, so `packaging-checks.yml` and `harness-selftests.yml` | 229 passed, 0 failed, 219 s; no guest needed. Listed as "not in CI" in the first version of this table — `harness-selftests.sh` already ran it |
 | Autopilot self-tests | `./packaging/tests/pre-g8-autopilot-selftests.sh` | **no** | 273 passed, 0 failed, 1580 s (26 min) on 2026-10-04; no guest needed. Too slow for a per-PR gate, and it runs the G7-UP suite again inside itself: run it by hand, or on a schedule if the owner wants one |
 | G7-UP migration self-tests | `./packaging/tests/g7up-gui-migration-selftests.sh` | `harness-selftests.yml` | 120 passed, 0 failed, 477 s; no VM |

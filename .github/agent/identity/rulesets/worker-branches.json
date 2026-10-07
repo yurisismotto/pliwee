@@ -1,0 +1,8 @@
+{
+  "name": "agent — worker branches are fast-forward only",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/heads/feature/issue-*-worker"], "exclude": [] } },
+  "bypass_actors": [],
+  "rules": [ { "type": "non_fast_forward" } ]
+}

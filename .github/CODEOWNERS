@@ -1,0 +1,20 @@
+# The repository owner is the only code owner, of every path.
+#
+# On its own this file enforces nothing. It takes effect through the `main`
+# ruleset's `require_code_owner_review` (docs/development/AGENT-WORKFLOW.md
+# § Execution identity), which is applied together with the worker App. From
+# then on a merge needs the owner's approval: the worker App cannot approve its
+# own PR, and its approval of anyone else's PR is not a code owner's. The
+# owner's own PRs merge through the admin role's pull-request bypass.
+#
+# The governance paths are listed again below the catch-all so that review
+# requests name them; ownership is the same.
+
+*                                   @yurisismotto
+
+/.github/                           @yurisismotto
+/.claude/                           @yurisismotto
+/AGENTS.md                          @yurisismotto
+/SECURITY.md                        @yurisismotto
+/docs/development/AGENT-*           @yurisismotto
+/docs/security/                     @yurisismotto
