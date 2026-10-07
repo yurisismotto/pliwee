@@ -9,10 +9,10 @@
 # Needs: the owner's own gh login (setup, the owner's half, cleanup); the App's
 # installation token in $CERT_APP_TOKEN_FILE (app.sh token); $PLIWEE_WORKER_APP_BOT.
 #
-# Nothing here can reach main: every merge attempt targets `certify/main`,
-# which the certify-mirror ruleset holds to main's review rules. Required
-# checks are not mirrored — no workflow runs on a PR to certify/main — and are
-# proved instead against main itself by the provenance probe.
+# Nothing here can reach main: every run creates a fresh
+# `certify/run-<tag>` destination exactly at the current main SHA. That ref is
+# covered by the repository's owner-only generic branch ruleset. Required
+# checks are proved independently against main by the provenance probe.
 #
 # Each check states what it expects. A denial that succeeds is FAIL; a check
 # whose precondition is missing is BLOCKED, never PASS. Exit 0 only when every
@@ -165,100 +165,112 @@ cmd_run() {
         || rec G8.1 FAIL "a required check on main is not pinned to github-actions" ""
 
     # ---- setup, as the owner ----------------------------------------------
+    #
+    # Every run receives a NEW protected destination ref created exactly at
+    # the current production main SHA.
+    #
+    # `certify/run-*` is NOT excluded from the repository's generic
+    # owner-only branch ruleset. Therefore creation/update/deletion of this
+    # destination is an owner-only server-side operation.
+    #
+    # No certification history is reused, so merge probes test authorization
+    # rather than stale ancestry, non-fast-forward state or old conflicts.
     local W
+    local base
+    local cert_branch
+    local create_out
+    local create_rc
+
     W="$(mktemp -d)"
     trap 'rm -rf "$W"' RETURN
 
-    local base cert_sha sync_out sync_rc
-    base="$(owner_api "repos/$REPO_SLUG/commits/main" --jq .sha)"
-
-    # certify/main is persistent. Create once; afterwards move it only forward.
-    cert_sha="$(
+    base="$(
         owner_api \
-          "repos/$REPO_SLUG/git/ref/heads/certify/main" \
-          --jq .object.sha
+          "repos/$REPO_SLUG/commits/main" \
+          --jq .sha
     )"
 
-    if ! [[ "$cert_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    cert_branch="certify/run-$TAG"
+
+    create_out="$(
         owner_api \
           -X POST \
           "repos/$REPO_SLUG/git/refs" \
-          -f ref=refs/heads/certify/main \
+          -f ref="refs/heads/$cert_branch" \
           -f sha="$base" \
-          >/dev/null
+          --jq .ref
+    )"
+    create_rc=$?
 
-        cert_sha="$(
-            owner_api \
-              "repos/$REPO_SLUG/git/ref/heads/certify/main" \
-              --jq .object.sha
-        )"
-    fi
+    if [ "$create_rc" -ne 0 ]; then
 
-    # Merge production main INTO the disposable certification ref.
-    # This keeps certify/main a descendant of its previous state and avoids
-    # the non-fast-forward rule that invalidated previous certification runs.
-    if [ "$cert_sha" != "$base" ]; then
-        sync_out="$(
-            owner_api \
-              -X POST \
-              "repos/$REPO_SLUG/merges" \
-              -f base=certify/main \
-              -f head="$base" \
-              -f commit_message="test(agent): sync certification ref to main $base"
-        )"
-        sync_rc=$?
-
-        if [ "$sync_rc" -ne 0 ]; then
-            if infra_error "$sync_out"; then
-                rec G5.0 BLOCKED \
-                    "could not synchronize certify/main because of infrastructure/network failure" \
-                    "$sync_out"
-                return 1
-            fi
-
+        if infra_error "$create_out"; then
             rec G5.0 BLOCKED \
-                "owner could not forward-synchronize persistent certify/main" \
-                "$sync_out"
-            return 1
+                "ephemeral certification-ref creation hit infrastructure/network failure" \
+                "$create_out"
+        else
+            rec G5.0 BLOCKED \
+                "owner could not create ephemeral protected certification ref" \
+                "$create_out"
         fi
+
+        return 1
     fi
+
+    if [ "$create_out" != "refs/heads/$cert_branch" ]; then
+        rec G5.0 BLOCKED \
+            "GitHub returned an unexpected certification ref" \
+            "$create_out"
+        return 1
+    fi
+
+    rec G5.0 PASS \
+        "owner created fresh protected certification ref" \
+        "$cert_branch @ $base"
 
     git clone -q "$URL" "$W/c" &&
         cd "$W/c" ||
         return 1
 
-    git fetch -q origin main certify/main
+    git fetch \
+        -q \
+        origin \
+        main \
+        "$cert_branch"
 
-    if git merge-base \
-         --is-ancestor \
-         origin/main \
-         origin/certify/main
-    then
-        rec G5.0b PASS \
-            "persistent certify/main contains current main" \
-            "$(git rev-parse origin/certify/main)"
-    else
+    local fetched_cert
+    fetched_cert="$(
+        git rev-parse \
+          "origin/$cert_branch"
+    )"
+
+    if [ "$fetched_cert" != "$base" ]; then
         rec G5.0b BLOCKED \
-            "certify/main does not contain current main; merge probes would be invalid" \
-            "main=$(git rev-parse origin/main) certify=$(git rev-parse origin/certify/main)"
+            "fresh certification ref is not exactly current main" \
+            "main=$base cert=$fetched_cert"
         return 1
     fi
 
-    # Critical: the certification PR must be based on certify/main itself.
-    # Otherwise stale certification history creates artificial merge conflicts.
+    rec G5.0b PASS \
+        "fresh certification ref starts exactly at current main" \
+        "$base"
+
+    # The worker probe is exactly one commit above the protected destination.
     git switch \
-      -q \
-      -c feature/issue-999999-worker \
-      origin/certify/main
+        -q \
+        -c feature/issue-999999-worker \
+        "origin/$cert_branch"
 
-    printf 'certification %s\n' "$TAG" > "CERTIFY-$TAG.txt"
+    printf 'certification %s\n' "$TAG" \
+        > "CERTIFY-$TAG.txt"
 
-    git add "CERTIFY-$TAG.txt"
+    git add \
+        "CERTIFY-$TAG.txt"
 
     git commit \
-      -q \
-      -m "test(agent): identity certification probe" \
-      -m "Never merged into main."
+        -q \
+        -m "test(agent): identity certification probe" \
+        -m "Never merged into main."
 
     # ---- split publication capabilities -----------------------------------
     allow G4.6 \
@@ -271,7 +283,7 @@ cmd_run() {
         app_api -X POST "repos/$REPO_SLUG/pulls" \
         -f title="must-not-open" \
         -f head=feature/issue-999999-worker \
-        -f base=certify/main \
+        -f base="$cert_branch" \
         -F draft=true \
         -f body=probe
 
@@ -293,7 +305,7 @@ cmd_run() {
           "repos/$REPO_SLUG/pulls" \
           -f title="CERTIFY $TAG (never merge)" \
           -f head=feature/issue-999999-worker \
-          -f base=certify/main \
+          -f base="$cert_branch" \
           -F draft=true \
           -f body="Identity certification probe. Never merged into main." \
           --jq .number
@@ -329,12 +341,12 @@ cmd_run() {
         "App pushes a fast-forward candidate directly to main" \
         app_git push -q "$URL" HEAD:refs/heads/main
 
-    # Back to the worker commit based directly on certify/main.
+    # Back to the worker commit based directly on the fresh protected certification ref.
     git switch -q feature/issue-999999-worker
 
     deny G5.3 \
-        "App pushes a fast-forward candidate directly to certify/main" \
-        app_git push -q "$URL" HEAD:refs/heads/certify/main
+        "App pushes a fast-forward candidate directly to the protected certification ref" \
+        app_git push -q "$URL" "HEAD:refs/heads/$cert_branch"
     local b; for b in develop release/cert-$TAG security/cert-$TAG docs/cert-$TAG agent/cert-$TAG; do
         deny "G5.4" "App creates or updates $b"       app_git push -q "$URL" HEAD:refs/heads/$b
     done
@@ -388,9 +400,9 @@ cmd_run() {
     else for v in G6.1 G6.2 G6.3 G6.4 G6.5 G6.6; do rec "$v" BLOCKED "no certification PR" ""; done; fi
 
     # An owner PR the App approves: the approval must not be a code owner's.
-    git switch -q -c certify/owner-pr-$TAG origin/certify/main; echo "owner $TAG" > OWNER.txt; git add OWNER.txt; git commit -q -m "test(agent): owner PR probe"
+    git switch -q -c certify/owner-pr-$TAG "origin/$cert_branch"; echo "owner $TAG" > OWNER.txt; git add OWNER.txt; git commit -q -m "test(agent): owner PR probe"
     env -u GH_TOKEN git push -q origin HEAD:refs/heads/certify/owner-pr-$TAG 2>/dev/null
-    local opr; opr="$(owner_api -X POST "repos/$REPO_SLUG/pulls" -f title="CERTIFY owner $TAG (never merge)" -f head="certify/owner-pr-$TAG" -f base=certify/main -f body="probe" --jq .number)"
+    local opr; opr="$(owner_api -X POST "repos/$REPO_SLUG/pulls" -f title="CERTIFY owner $TAG (never merge)" -f head="certify/owner-pr-$TAG" -f base="$cert_branch" -f body="probe" --jq .number)"
     if [[ "$opr" =~ ^[0-9]+$ ]]; then
         allow G6.7 "PR broker may review the owner's PR" broker_api -X POST "repos/$REPO_SLUG/pulls/$opr/reviews" -f event=APPROVE
         deny G6.8 "PR broker merges the owner's PR on its own approval" broker_api -X PUT "repos/$REPO_SLUG/pulls/$opr/merge" -f merge_method=merge
@@ -492,7 +504,7 @@ cmd_run() {
         # Pull requests NONE
         #
         # Since Contents permission reaches the merge endpoint, this must be
-        # stopped SPECIFICALLY by owner-only protected certify/main updates.
+        # stopped SPECIFICALLY by the owner-only protected certification-ref update rule.
         ######################################################################
 
         final_worker_merge="$(
@@ -520,7 +532,7 @@ cmd_run() {
               <<<"$final_worker_merge"; then
 
             rec G6.9b PASS \
-                "worker App cannot update certify/main even after owner approval" \
+                "worker App cannot update the protected certification ref even after owner approval" \
                 "$final_worker_merge"
 
         else
@@ -531,11 +543,11 @@ cmd_run() {
         fi
 
         ######################################################################
-        # OWNER alone may update certify/main.
+        # OWNER alone may update the protected certification ref.
         ######################################################################
 
         allow G6.9c \
-            "owner alone merges approved worker PR into certify/main" \
+            "owner alone merges approved worker PR into the protected certification ref" \
             owner_api \
             -X PUT \
             "repos/$REPO_SLUG/pulls/$pr/merge" \
@@ -562,7 +574,7 @@ cmd_run() {
 
     # ---- cleanup, as the owner ----------------------------------------------
     local n; for n in $pr ${opr:-}; do owner_api -X PATCH "repos/$REPO_SLUG/pulls/$n" -f state=closed >/dev/null; done
-    for b in "certify/owner-pr-$TAG" feature/issue-999999-worker feature/issue-999998-worker; do
+    for b in "$cert_branch" "certify/owner-pr-$TAG" feature/issue-999999-worker feature/issue-999998-worker; do
         owner_api -X DELETE "repos/$REPO_SLUG/git/refs/heads/$b" >/dev/null
     done
     [ "$(owner_api "repos/$REPO_SLUG/commits/main" --jq .sha)" = "$base" ] \
