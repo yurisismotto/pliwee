@@ -78,3 +78,34 @@ The refined certification now:
 - allows only the owner to perform the disposable certification merge.
 
 Production main remains outside destructive certification probes.
+
+## Certification refinement — protected-ref boundary
+
+The next V2 run measured two additional platform facts.
+
+First, `certify/main` is protected by non-fast-forward and deletion rules. The
+old harness attempted to force-reset and delete that ref between runs. Those
+operations were correctly refused, leaving a stale certification base and
+causing artificial merge conflicts. `certify/main` is now a persistent
+certification ref. Before each run, the owner advances it by merging current
+`main` into it, and all certification PR branches are created directly from
+that synchronized ref.
+
+Second, Draft/Ready cannot be treated as an authorization boundary.
+`pliwee-worker` was measured successfully invoking the GraphQL
+`markPullRequestReadyForReview` mutation despite its REST Pull Request
+operations being denied and despite no declared Pull requests permission.
+The ready-for-review compensating workflow was not a reliable barrier for that
+mutation.
+
+Accordingly:
+
+- autonomous publication still opens Draft for UX;
+- trusted code never intentionally marks its PR Ready;
+- Draft/Ready is explicitly advisory;
+- the unreliable ready guard is removed;
+- certification succeeds only if neither execution App can update the
+  protected certification ref after owner approval;
+- only the owner may perform the disposable certification merge.
+
+Production `main` remains untouched by certification merges.
