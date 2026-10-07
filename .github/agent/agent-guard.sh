@@ -131,7 +131,7 @@ check_commits() {
 # still counts as touching it. An empty change set is a failure: nothing was
 # measured.
 # ---------------------------------------------------------------------------
-PROTECTED_RE='^(\.github/workflows/|\.github/agent/|\.github/actionlint\.yaml$|\.claude/skills/pliwee-issue-worker/|AGENTS\.md$|docs/(audits|certification|reports)/)'
+PROTECTED_RE='^(\.github/workflows/|\.github/agent/|\.github/actionlint\.yaml$|\.github/CODEOWNERS$|\.claude/skills/pliwee-issue-worker/|AGENTS\.md$|SECURITY\.md$|docs/development/AGENT-|docs/security/|docs/(audits|certification|reports)/)'
 
 check_paths() {
     local base="${1:-}" mb changed hit
@@ -239,8 +239,24 @@ check_issue() {
     [ "$state" = open ] || reasons+=("#$n is $state")
     [[ " $labels " == *" agent:ready "* ]] || reasons+=("#$n is not labelled agent:ready; only the owner approves work")
     [[ " $labels " == *" agent:working "* ]] && reasons+=("#$n is already labelled agent:working")
-    [ "$author" = "$PLIWEE_OWNER_LOGIN" ] \
-        || reasons+=("#$n was opened by '$author', not the owner; its text is not an instruction this worker takes")
+    # The one other author whose issue may be worked: the trusted coordinator,
+    # for a derived issue it created — and only while the proposal still
+    # passes the coordinator's own check (docs/development/AGENT-EXECUTION-SPEC.md).
+    if [ "$author" = "github-actions[bot]" ] && [[ " $labels " == *" agent:derived "* ]]; then
+        local dbody dfile dout
+        dbody="$(jq -r '.body // ""' <<<"$issue")"
+        if ! grep -qE '^<!-- pliwee-derived \{.*\} -->$' <<<"$dbody"; then
+            reasons+=("#$n is labelled agent:derived but carries no coordinator marker")
+        else
+            dfile="$(mktemp)"
+            { printf '# %s\n\n' "$(jq -r '.title // ""' <<<"$issue")"; grep -vE '^<!-- pliwee-derived ' <<<"$dbody"; } > "$dfile"
+            dout="$("$HERE/coordinator.sh" derive-check "$dfile" 2>&1)" \
+                || reasons+=("#$n is a derived issue that no longer passes derive-check: ${dout//$'\n'/; }")
+            rm -f -- "$dfile"
+        fi
+    elif [ "$author" != "$PLIWEE_OWNER_LOGIN" ]; then
+        reasons+=("#$n was opened by '$author', not the owner; its text is not an instruction this worker takes")
+    fi
     local ed; ed="$(jq -r '.editor // ""' <<<"$editor")"
     [ -z "$ed" ] || [ "$ed" = "$PLIWEE_OWNER_LOGIN" ] \
         || reasons+=("#$n was last edited by '$ed', not the owner; the approved text may have changed")
@@ -340,6 +356,8 @@ selftest() {
     expect 1 "REJECTS a base that is not a commit"                  "$SELF" paths no-such-ref
     local pp
     for pp in .github/agent/agent-guard.sh .github/workflows/ci.yml AGENTS.md docs/reports/x.md \
+              .github/agent/coordinator.sh .github/agent/sandbox.sh .github/CODEOWNERS \
+              docs/development/AGENT-EXECUTION-SPEC.md docs/security/THREAT_MODEL.md SECURITY.md \
               .claude/skills/pliwee-issue-worker/SKILL.md .github/actionlint.yaml; do
         mkdir -p "$(dirname "$pp")"; printf 'x\n' > "$pp"; git add -- "$pp"; git commit -q -m "chore: $pp"
         expect 1 "REJECTS a change to $pp"                          "$SELF" paths base
@@ -379,8 +397,8 @@ selftest() {
     # mk N STATE AUTHOR EDITOR LABELS BLOCKED_JSON [PR]
     mk() {
         mkdir -p "$f/$1"
-        jq -n --arg s "$2" --arg a "$3" --arg l "$5" --argjson pr "${7:-null}" \
-            '{state:$s, user:{login:$a}, pull_request:$pr, labels:($l|split(" ")|map(select(.!=""))|map({name:.}))}' > "$f/$1/issue.json"
+        jq -n --arg s "$2" --arg a "$3" --arg l "$5" --argjson pr "${7:-null}" --arg t "${8:-An issue title}" --arg b "${9:-}" \
+            '{state:$s, user:{login:$a}, pull_request:$pr, title:$t, body:$b, labels:($l|split(" ")|map(select(.!=""))|map({name:.}))}' > "$f/$1/issue.json"
         jq -n --arg e "$4" '{editor: (if $e == "" then null else $e end)}' > "$f/$1/editor.json"
         printf '%s\n' "$6" > "$f/$1/blocked_by.json"
     }
@@ -393,6 +411,16 @@ selftest() {
     mk 7 open   owner stranger "agent:ready"        '[]'
     mk 8 open   owner ""      "agent:ready agent:working" '[]'
     mk 9 open   owner ""      "agent:ready"         '[]' '{"url":"x"}'
+    local dgood dbad
+    dgood="$(printf '%s\n' '<!-- pliwee-derived {"parent":1,"root":1,"depth":1,"session":"9"} -->' \
+        '## Origin' 'From #1.' '## Why' 'w' '## Scope' '- packaging/tests/x.sh' '## Out of scope' '- rest' \
+        '## Acceptance criteria' '- [ ] a' '## Test plan' '- run it' '## Risk' 'Low.' \
+        '## Dependencies' 'Depends on parent: no' '## Evidence required' '- output')"
+    dbad="${dgood/- packaging\/tests\/x.sh/- edit .github/workflows/ci.yml}"
+    mk 11 open "github-actions[bot]" "" "agent:ready agent:derived" '[]' null "Derived follow-up work" "$dgood"
+    mk 12 open "github-actions[bot]" "" "agent:ready agent:derived" '[]' null "Derived follow-up work" "$dbad"
+    mk 13 open "github-actions[bot]" "" "agent:ready agent:derived" '[]' null "Derived follow-up work" "${dgood#*$'\n'}"
+    mk 14 open "github-actions[bot]" "" "agent:ready"               '[]' null "Derived follow-up work" "$dgood"
     mkdir -p "$f/10"; printf '{"state":"open","user":{"login":"owner"},"labels":[]}\n' > "$f/10/issue.json"
     printf '{"editor":null}\n' > "$f/10/editor.json"   # no blocked_by.json: the fetch fails
     export PLIWEE_AGENT_FIXTURE_DIR="$f"
@@ -407,6 +435,10 @@ selftest() {
     expect 3 "REJECTS a pull request"                               "$SELF" issue 9
     expect 1 "REJECTS — as an error, not ready — a failed fetch"    "$SELF" issue 10
     expect 1 "REJECTS a missing issue"                              "$SELF" issue 404
+    expect 0 "ACCEPTS a coordinator-derived issue that passes derive-check" "$SELF" issue 11
+    expect 3 "REJECTS a derived issue whose scope touches a workflow" "$SELF" issue 12
+    expect 3 "REJECTS a bot issue labelled derived without the marker" "$SELF" issue 13
+    expect 3 "REJECTS a bot issue that is not labelled derived"     "$SELF" issue 14
     expect 1 "REJECTS when the owner's login is not configured"     env -u PLIWEE_OWNER_LOGIN "$SELF" issue 1
     local out; out="$("$SELF" issue 3 2>&1)"
     contains "$out" "blocked: open blocker #5: Capability negotiation" \

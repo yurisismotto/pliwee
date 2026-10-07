@@ -140,7 +140,7 @@ jobs:
             sort -u
           )"
 
-          protected='^(\.github/workflows/|\.github/agent/|\.github/actionlint\.yaml$|\.claude/skills/pliwee-issue-worker/|AGENTS\.md$|docs/(audits|certification|reports)/)'
+          protected='^(\.github/workflows/|\.github/agent/|\.github/actionlint\.yaml$|\.github/CODEOWNERS$|\.claude/skills/pliwee-issue-worker/|AGENTS\.md$|SECURITY\.md$|docs/development/AGENT-|docs/security/|docs/(audits|certification|reports)/)'
 
           if grep -Eq "$protected" <<<"$changed"; then
             echo "::error::worker PR touches protected paths"

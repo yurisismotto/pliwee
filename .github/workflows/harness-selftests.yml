@@ -95,6 +95,7 @@ jobs:
           }
           bad=0
           run_suite agent-guard            ./.github/agent/agent-guard.sh --selftest
+          run_suite agent-coordinator      ./.github/agent/coordinator.sh --selftest
           run_suite evidence-whitespace    ./packaging/tests/evidence-whitespace-check.sh --selftest
           run_suite harness-selftests      ./packaging/tests/harness-selftests.sh
           run_suite g7up-gui-migration     ./packaging/tests/g7up-gui-migration-selftests.sh

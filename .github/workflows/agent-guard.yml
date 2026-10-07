@@ -48,14 +48,14 @@ jobs:
 
       - name: Shell parses
         run: |
-          for f in .github/agent/agent-guard.sh .github/agent/worker-commit.sh .github/agent/hooks/*; do
+          for f in .github/agent/agent-guard.sh .github/agent/worker-commit.sh .github/agent/coordinator.sh .github/agent/sandbox.sh .github/agent/worker-pipeline.sh .github/agent/hooks/*; do
               bash -n "$f" && printf '  ok    %s parses\n' "$f"
           done
 
       - name: Shellcheck
         run: |
           shellcheck --version
-          shellcheck -S warning .github/agent/agent-guard.sh .github/agent/worker-commit.sh .github/agent/hooks/*
+          shellcheck -S warning .github/agent/agent-guard.sh .github/agent/worker-commit.sh .github/agent/coordinator.sh .github/agent/sandbox.sh .github/agent/worker-pipeline.sh .github/agent/hooks/*
 
       - name: The hooks are executable and call the guard
         run: |
@@ -69,6 +69,39 @@ jobs:
 
       - name: agent-guard.sh --selftest — every check rejects what it must
         run: ./.github/agent/agent-guard.sh --selftest
+
+      - name: coordinator.sh --selftest — the night state machine fails closed
+        run: ./.github/agent/coordinator.sh --selftest
+
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor,
+      # which bubblewrap needs. The runner is throwaway; the restriction is
+      # lifted for this job only, so the sandbox's own tests can run.
+      - name: sandbox.sh and worker-pipeline.sh --selftest — no credential, nothing planted runs outside
+        run: |
+          set -eu
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          ./.github/agent/sandbox.sh --selftest
+          ./.github/agent/worker-pipeline.sh --selftest
+
+      - name: The worker runs Claude only inside the sandbox
+        run: |
+          set -eu
+          f=.github/workflows/agent-issue-worker.yml
+          n="$(grep -c 'claude -p' "$f")"
+          [ "$n" = 1 ] || { echo "::error::$f invokes claude $n times; expected exactly one, sandboxed"; exit 1; }
+          # shellcheck disable=SC2016  # a literal line of the workflow, not an expansion
+          grep -B6 'claude -p' "$f" | grep -Fq '"$SANDBOX" run --work "$WORK" --outbox "$OUTBOX" --' \
+              || { echo "::error::claude -p is not run through sandbox.sh"; exit 1; }
+          if grep -nE '^[[:space:]]*GH_TOKEN:' <(sed -n '/Work the issue/,/- name:/p' "$f"); then
+              echo "::error::the Claude step is given a token"; exit 1
+          fi
+          s=.github/agent/claude-settings.json
+          jq -e '.permissions.deny | index("Bash(gh:*)") != null' "$s" >/dev/null || { echo "::error::$s does not deny gh"; exit 1; }
+          if jq -e '.permissions.allow[] | select(startswith("Bash(gh"))' "$s" >/dev/null; then
+              echo "::error::$s allows gh"; exit 1
+          fi
+          echo "  ok    one claude invocation, through sandbox.sh, no token, no gh"
 
       - name: Worker permissions — fixed commit wrapper, merging stays denied
         run: |
