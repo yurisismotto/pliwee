@@ -446,25 +446,61 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_BROKER_LOGIN: ${{ vars.PLIWEE_PR_BROKER_APP_BOT }}
+          PUBLISHED_PR_URL: ${{ steps.publish.outputs.url }}
         run: |
           set -eu
           b="${{ steps.prepare.outputs.branch }}"
+
+          [ -n "$PUBLISHED_PR_URL" ] \
+              || { echo "::error::the PR broker returned no published PR URL"; exit 1; }
+
           git -C "$PUB" fetch -q origin "$b"
-          [ "$(git -C "$PUB" rev-parse "refs/heads/$b")" = "$(git -C "$PUB" rev-parse "origin/$b")" ] \
+
+          expected_head="$(git -C "$PUB" rev-parse "refs/heads/$b")"
+          remote_head="$(git -C "$PUB" rev-parse "origin/$b")"
+
+          [ "$expected_head" = "$remote_head" ] \
               || { echo "::error::published branch differs from the verified HEAD"; exit 1; }
-          pr="$(gh pr list -R "$PLIWEE_REPO" --head "$b" --state all --json number,isDraft,state,body,autoMergeRequest,baseRefName,author)"
-          jq -e --arg a "${PR_BROKER_LOGIN%\[bot\]}" '.[0].author.login == $a or .[0].author.login == ("app/" + $a)' <<<"$pr" >/dev/null \
-              || { echo "::error::the PR was not opened by the PR broker $PR_BROKER_LOGIN: $(jq -r '.[0].author.login' <<<"$pr")"; exit 1; }
-          jq -e 'length == 1' <<<"$pr" >/dev/null || { echo "::error::expected exactly one PR for $b: $pr"; exit 1; }
-          jq -e '.[0].state == "OPEN" and .[0].isDraft == true' <<<"$pr" >/dev/null || { echo "::error::PR is not an open Draft"; exit 1; }
-          jq -e '.[0].autoMergeRequest == null' <<<"$pr" >/dev/null || { echo "::error::auto-merge is enabled"; exit 1; }
-          jq -e '.[0].baseRefName == "main"' <<<"$pr" >/dev/null || { echo "::error::PR does not target main"; exit 1; }
-          jq -e --arg n "$ISSUE" '.[0].body | test("Implements #" + $n + "([^0-9]|$)")' <<<"$pr" >/dev/null \
+
+          # Verify the exact PR returned by the broker creation step. Historical
+          # closed PRs that reused this branch name are irrelevant.
+          pr="$(gh pr view "$PUBLISHED_PR_URL" -R "$PLIWEE_REPO" \
+              --json number,isDraft,state,body,autoMergeRequest,baseRefName,headRefName,headRefOid,author)"
+
+          broker="${PR_BROKER_LOGIN%\[bot\]}"
+
+          jq -e --arg a "$broker" \
+              '.author.login == $a or .author.login == ("app/" + $a)' \
+              <<<"$pr" >/dev/null \
+              || { echo "::error::the PR was not opened by the PR broker $PR_BROKER_LOGIN: $(jq -r '.author.login' <<<"$pr")"; exit 1; }
+
+          jq -e '.state == "OPEN" and .isDraft == true' <<<"$pr" >/dev/null \
+              || { echo "::error::published PR is not an open Draft"; exit 1; }
+
+          jq -e '.autoMergeRequest == null' <<<"$pr" >/dev/null \
+              || { echo "::error::auto-merge is enabled"; exit 1; }
+
+          jq -e '.baseRefName == "main"' <<<"$pr" >/dev/null \
+              || { echo "::error::PR does not target main"; exit 1; }
+
+          jq -e --arg b "$b" '.headRefName == $b' <<<"$pr" >/dev/null \
+              || { echo "::error::PR head is not the verified worker branch"; exit 1; }
+
+          jq -e --arg h "$expected_head" '.headRefOid == $h' <<<"$pr" >/dev/null \
+              || { echo "::error::PR head SHA is not the verified published HEAD"; exit 1; }
+
+          jq -e --arg n "$ISSUE" \
+              '.body | test("Implements #" + $n + "([^0-9]|$)")' \
+              <<<"$pr" >/dev/null \
               || { echo "::error::PR body does not reference Implements #$ISSUE"; exit 1; }
-          jq -e --arg n "$ISSUE" '.[0].body | contains("<!-- pliwee-agent-issue:" + $n + " -->")' <<<"$pr" >/dev/null \
+
+          jq -e --arg n "$ISSUE" \
+              '.body | contains("<!-- pliwee-agent-issue:" + $n + " -->")' \
+              <<<"$pr" >/dev/null \
               || { echo "::error::PR body does not carry the trusted issue marker"; exit 1; }
-          echo "pr=$(jq -r '.[0].number' <<<"$pr")" >> "$GITHUB_OUTPUT"
-          echo "  ok    $b published as one open Draft PR to main"
+
+          echo "pr=$(jq -r '.number' <<<"$pr")" >> "$GITHUB_OUTPUT"
+          echo "  ok    exact broker-created Draft PR verified for $b at $expected_head"
 
       - name: Hand over to the owner
         if: steps.verify.outcome == 'success'
