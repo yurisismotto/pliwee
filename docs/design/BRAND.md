@@ -86,6 +86,19 @@ hand-built `Settings`. Neither renames a device that already exists.
 > resource stops being the frozen master. With that, no application build
 > draws OmniBridge artwork. (The Play graphics sources, `assets/play/render.sh`,
 > still render from the OmniBridge files until Wave 10.)
+>
+> **2026-10-03 (Play graphics re-pointed; current state as of 2026-10-06).**
+> The parenthesis above is superseded: the Play graphics moved before Wave 10,
+> in `d92fe09` and `6ee8d27`. Every current store asset carries the Pliwee
+> identity. [`play-icon-512.png`](assets/play/play-icon-512.png) is
+> `pliwee-mark.svg` placed exactly as the Android launcher foreground places
+> it, on Surface `#F7F9FC`;
+> [`play-feature-graphic-1024x500.png`](assets/play/play-feature-graphic-1024x500.png)
+> is `pliwee-lockup.svg`. Both are rendered by `assets/play/render.sh` from
+> those masters and nothing else. The store screenshots under
+> `assets/play/screenshots/` are captures of the real Pliwee UI (see
+> [PLAY-STORE-LISTING.md](PLAY-STORE-LISTING.md#screenshots--the-real-app-with-demonstration-data)).
+> The OmniBridge files below remain in the tree only as history.
 
 The official OmniBridge artwork was supplied and installed on 2026-09-21. The
 `BLOCKED_VISUAL_ASSET` notice that stood here is withdrawn: there is no
@@ -241,7 +254,9 @@ board in the same way. Neither depends on a font being installed. Product
   foreground and monochrome layers, the in-app brand drawable, Play icon and
   feature graphic) is produced **from these masters** in the wave that owns
   it (W6, W7, W10), and is asserted against them by geometry, as the
-  OmniBridge derivatives are today.
+  OmniBridge derivatives were. (As of 2026-10-06 every derivative named here
+  is produced from these masters: Android since W6, the desktop since W7, the
+  Play icon and feature graphic since 2026-10-03.)
 * **No platform redraws the symbol independently.** No retrace, no
   simplification, no "optical adjustment", no second monogram, no Connected
   Nodes. A platform that cannot render a master's construct (for example a
@@ -263,9 +278,9 @@ Two consequences run through everything below.
 two sides is the product in one shape: two endpoints, one flow, no third
 party. It appears as the mark, as the empty-state illustration, as the
 transfer motif — always the same artwork, never a generic swoosh. Under
-Pliwee that gesture is the **Flow Monogram**; until W6 and W7 re-point the
-derivatives, the surfaces still draw the OmniBridge span described under
-[Logo](#logo).
+Pliwee that gesture is the **Flow Monogram**, which every surface has drawn
+since W6 and W7 re-pointed the derivatives; before that they drew the
+OmniBridge span described under [Logo](#logo).
 
 **The interface stays quiet.** The palette is vivid but the UI is mostly
 neutral: white or Ink surfaces, hairline borders, one accent at a time. Colour
@@ -558,8 +573,9 @@ W7 and the pre-W8 remediation.
 
 **Retired — OmniBridge v1.0.0 artwork, not canonical.** Kept in the tree as
 history and structurally checked by `brand_assets.rs`; no application build
-draws them. The Play graphics sources still render from two of them until
-Wave 10.
+draws them, and no store asset is rendered from them. The Play graphics
+rendered from two of them until 2026-10-03; they now render from the Pliwee
+masters.
 
 | File | Role until it was retired |
 |---|---|
@@ -585,5 +601,5 @@ checked by reading the file — what the tests assert instead is that no active
 asset carries the pre-rename identity, and that every product surface which
 *speaks* the name says Pliwee (`BrandingResourcesTest` for the Android label,
 the tray and panel tests for the desktop). The retired OmniBridge wordmark and
-lockup still *draw* "OmniBridge"; no application build uses them, and the Play
-graphics that still render from the OmniBridge files move in Wave 10.
+lockup still *draw* "OmniBridge"; no application build uses them, and since
+2026-10-03 neither do the Play graphics, which render from the Pliwee masters.
