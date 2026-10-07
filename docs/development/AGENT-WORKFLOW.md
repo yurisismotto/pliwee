@@ -941,3 +941,37 @@ Reviewed 2026-10-04 over every workflow on this branch:
 
 Residual risk: a fork PR still runs arbitrary code on a GitHub-hosted runner
 once approved. That is the runner's sandbox, and it holds nothing of ours.
+
+## Worker publication is fail-closed
+
+A worker commit is not, by itself, a successful autonomous handoff.
+
+The trusted workflow may mint the publisher identity and create a Draft PR only
+when all of the following are true:
+
+1. the Claude execution step completed successfully;
+2. the worker's structured `status.json` reports `outcome: done`;
+3. the worker produced a verifiable commit bundle;
+4. the trusted clean-clone guard accepts that bundle.
+
+`failed`, a missing/invalid result, or an inconsistent `done` result fails
+closed before the publisher token is minted. `blocked` and `owner-decision`
+remain non-publishable hand-back states.
+
+### Rust Tier 1 environment
+
+The self-hosted runner owns a rustup stable toolchain with `rustfmt` and
+`clippy`. The toolchain remains read-only to the model.
+
+For sandboxed execution the workflow sets a dedicated writable Cargo cache at:
+
+`~/.cache/pliwee-cargo`
+
+The sandbox already exposes `~/.cache` as writable build state while keeping
+the rest of `$HOME` read-only and hiding GitHub, SSH and other credentials.
+
+Consequently, Rust work can execute the repository's Tier 1 formatting,
+linting and test commands inside the credential-free sandbox before handoff.
+
+GitHub CI remains a separate second measurement after publication. A CI failure
+is never converted into a PASS merely because the worker reported success.

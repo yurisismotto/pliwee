@@ -143,6 +143,44 @@ jobs:
               echo "PUB=$RUNNER_TEMP/publish"
           } >> "$GITHUB_ENV"
 
+      # Rust work must have a real Tier 1 toolchain before Claude starts.
+      #
+      # The rustup toolchain itself stays read-only in ~/.cargo/bin and
+      # ~/.rustup. Only dependency/build cache data gets a writable CARGO_HOME
+      # under ~/.cache, which sandbox.sh already treats as a writable cache
+      # tree. No GitHub credential is added.
+      - name: Rust Tier 1 environment — available or fail closed
+        run: |
+          set -eu
+
+          rust_bin="$HOME/.cargo/bin"
+          sandbox_cargo_home="$HOME/.cache/pliwee-cargo"
+          rustup_home="$HOME/.rustup"
+
+          mkdir -p "$sandbox_cargo_home"
+
+          export PATH="$rust_bin:$PATH"
+          export CARGO_HOME="$sandbox_cargo_home"
+          export RUSTUP_HOME="$rustup_home"
+
+          command -v rustup >/dev/null
+          command -v cargo >/dev/null
+          command -v rustc >/dev/null
+          command -v rustfmt >/dev/null
+          command -v cargo-clippy >/dev/null
+
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+          rustfmt --version
+          cargo clippy --version
+
+          test -w "$CARGO_HOME"
+
+          echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
+          echo "$rust_bin" >> "$GITHUB_PATH"
+
       - name: Dependency gate — the mechanical half
         id: gate
         env:
@@ -276,8 +314,52 @@ jobs:
       # A clean clone, its hooks the trusted copy's, the bundle fetched into
       # it. No checkout, and no git command in the work copy: the planted
       # configuration cases in worker-pipeline.sh --selftest are why.
+      # A bundle is not sufficient evidence of success. Publication is
+      # fail-closed on the structured worker outcome.
+      - name: Worker handoff contract — fail closed
+        id: handoff
+        if: always() && steps.prepare.outcome == 'success'
+        env:
+          WORK_OUTCOME: ${{ steps.work.outcome }}
+          REPORTED: ${{ steps.report.outputs.reported }}
+          BUNDLE_MADE: ${{ steps.bundle.outputs.made }}
+        run: |
+          set -eu
+
+          case "$REPORTED" in
+              blocked|owner-decision)
+                  echo "publishable=false" >> "$GITHUB_OUTPUT"
+                  echo "  ok    $REPORTED is a hand-back state; nothing is published"
+                  ;;
+
+              done)
+                  [ "$WORK_OUTCOME" = "success" ] || {
+                      echo "::error::worker reported done but Claude step was '$WORK_OUTCOME'"
+                      exit 1
+                  }
+
+                  [ "$BUNDLE_MADE" = "true" ] || {
+                      echo "::error::worker reported done but produced no verifiable commit bundle"
+                      exit 1
+                  }
+
+                  echo "publishable=true" >> "$GITHUB_OUTPUT"
+                  echo "  ok    done + successful worker + bundle: eligible for trusted verification"
+                  ;;
+
+              failed|"")
+                  echo "::error::worker outcome is '${REPORTED:-missing}'; refusing autonomous publication"
+                  exit 1
+                  ;;
+
+              *)
+                  echo "::error::unexpected worker outcome '$REPORTED'; refusing autonomous publication"
+                  exit 1
+                  ;;
+          esac
+
       - name: Verify the work in a clean clone
-        if: steps.bundle.outputs.made == 'true' && steps.report.outputs.reported != 'blocked' && steps.report.outputs.reported != 'owner-decision'
+        if: steps.handoff.outputs.publishable == 'true'
         id: local_verify
         run: '"$PIPE" verify "$ISSUE" "${{ steps.prepare.outputs.base }}"'
       # Minted only now — after the model has exited and its work is verified —
