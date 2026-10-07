@@ -759,20 +759,31 @@ protected destination ref.
 
 ### Draft / Ready
 
-GitHub does not provide a permission narrower than Pull requests:write for
-opening Draft PRs. Consequently the PR broker can technically invoke
-Draft/Ready transitions.
+Draft/Ready is **presentation state, not an authorization boundary**.
 
-`agent-ready-guard.yml` is therefore retained as a compensating governance
-control. Unlike the original version, it does not use `GITHUB_TOKEN` for the
-mutation: certification proved that token received
-`Resource not accessible by integration`. The guard now mints a short-lived
-PR-broker token, executes no repository code and returns any non-owner
-Ready transition to Draft.
+The trusted PR broker opens every autonomous PR as Draft and the trusted
+publisher never intentionally marks it Ready. However, identity certification
+on 2026-10-07 measured that the publisher installation token could invoke the
+GraphQL `markPullRequestReadyForReview` mutation even though REST Pull Request
+operations were denied and the App declared no Pull requests permission.
 
-This is not the merge boundary. Even if Draft/Ready compensation failed, the
-broker has no Contents permission and the protected destination ref remains
-owner/admin-only.
+A compensating `ready_for_review` workflow was also not a reliable server-side
+barrier for that mutation, so it has been removed rather than documented as a
+control that the platform did not prove.
+
+This does not grant merge authority. Review state is intentionally excluded
+from the security model.
+
+The authoritative boundary is:
+
+- worker branch publication;
+- required CI;
+- owner approval;
+- owner-only update of the protected destination ref;
+- owner merge.
+
+The autonomous handoff still starts as Draft for the owner's morning review,
+but security does not depend on it remaining Draft.
 
 ### Negative security gates
 

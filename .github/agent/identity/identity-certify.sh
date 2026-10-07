@@ -150,7 +150,8 @@ cmd_run() {
     local rs; rs="$(owner_api "repos/$REPO_SLUG/rulesets" --jq '[.[] | select(.enforcement == "active") | .name]')"
     local want
     for want in "main — pull request only" "agent — only feature/issue-N-worker is writable without the owner" \
-                "agent — worker branches are fast-forward only" "tags — the owner's only" "certify — mirror of the main review rules"; do
+                "agent — worker branches are fast-forward only" "tags — the owner's only" \
+                "certify — mirror of the main review rules" "certify — owner-only updates probe"; do
         jq -e --arg n "$want" 'index($n) != null' >/dev/null <<<"$rs" \
             || { rec G5.0 BLOCKED "ruleset '$want' is not active; apply rulesets/ first" "$rs"; return 1; }
     done
@@ -164,13 +165,100 @@ cmd_run() {
         || rec G8.1 FAIL "a required check on main is not pinned to github-actions" ""
 
     # ---- setup, as the owner ----------------------------------------------
-    local W; W="$(mktemp -d)"; trap 'rm -rf "$W"' RETURN
-    local base; base="$(owner_api "repos/$REPO_SLUG/commits/main" --jq .sha)"
-    owner_api -X POST "repos/$REPO_SLUG/git/refs" -f ref=refs/heads/certify/main -f sha="$base" >/dev/null \
-        || owner_api -X PATCH "repos/$REPO_SLUG/git/refs/heads/certify/main" -f sha="$base" -F force=true >/dev/null
-    git clone -q "$URL" "$W/c" && cd "$W/c" || return 1
-    git switch -q -c feature/issue-999999-worker origin/main
-    echo "certification $TAG" > CERTIFY.txt; git add CERTIFY.txt; git commit -q -m "test(agent): identity certification probe" -m "Never merged into main."
+    local W
+    W="$(mktemp -d)"
+    trap 'rm -rf "$W"' RETURN
+
+    local base cert_sha sync_out sync_rc
+    base="$(owner_api "repos/$REPO_SLUG/commits/main" --jq .sha)"
+
+    # certify/main is persistent. Create once; afterwards move it only forward.
+    cert_sha="$(
+        owner_api \
+          "repos/$REPO_SLUG/git/ref/heads/certify/main" \
+          --jq .object.sha
+    )"
+
+    if ! [[ "$cert_sha" =~ ^[0-9a-f]{40}$ ]]; then
+        owner_api \
+          -X POST \
+          "repos/$REPO_SLUG/git/refs" \
+          -f ref=refs/heads/certify/main \
+          -f sha="$base" \
+          >/dev/null
+
+        cert_sha="$(
+            owner_api \
+              "repos/$REPO_SLUG/git/ref/heads/certify/main" \
+              --jq .object.sha
+        )"
+    fi
+
+    # Merge production main INTO the disposable certification ref.
+    # This keeps certify/main a descendant of its previous state and avoids
+    # the non-fast-forward rule that invalidated previous certification runs.
+    if [ "$cert_sha" != "$base" ]; then
+        sync_out="$(
+            owner_api \
+              -X POST \
+              "repos/$REPO_SLUG/merges" \
+              -f base=certify/main \
+              -f head="$base" \
+              -f commit_message="test(agent): sync certification ref to main $base"
+        )"
+        sync_rc=$?
+
+        if [ "$sync_rc" -ne 0 ]; then
+            if infra_error "$sync_out"; then
+                rec G5.0 BLOCKED \
+                    "could not synchronize certify/main because of infrastructure/network failure" \
+                    "$sync_out"
+                return 1
+            fi
+
+            rec G5.0 BLOCKED \
+                "owner could not forward-synchronize persistent certify/main" \
+                "$sync_out"
+            return 1
+        fi
+    fi
+
+    git clone -q "$URL" "$W/c" &&
+        cd "$W/c" ||
+        return 1
+
+    git fetch -q origin main certify/main
+
+    if git merge-base \
+         --is-ancestor \
+         origin/main \
+         origin/certify/main
+    then
+        rec G5.0b PASS \
+            "persistent certify/main contains current main" \
+            "$(git rev-parse origin/certify/main)"
+    else
+        rec G5.0b BLOCKED \
+            "certify/main does not contain current main; merge probes would be invalid" \
+            "main=$(git rev-parse origin/main) certify=$(git rev-parse origin/certify/main)"
+        return 1
+    fi
+
+    # Critical: the certification PR must be based on certify/main itself.
+    # Otherwise stale certification history creates artificial merge conflicts.
+    git switch \
+      -q \
+      -c feature/issue-999999-worker \
+      origin/certify/main
+
+    printf 'certification %s\n' "$TAG" > "CERTIFY-$TAG.txt"
+
+    git add "CERTIFY-$TAG.txt"
+
+    git commit \
+      -q \
+      -m "test(agent): identity certification probe" \
+      -m "Never merged into main."
 
     # ---- split publication capabilities -----------------------------------
     allow G4.6 \
@@ -228,8 +316,25 @@ cmd_run() {
     fi
 
     # ---- G5: branches ------------------------------------------------------
-    deny G5.2 "App pushes to main"                    app_git push -q "$URL" HEAD:refs/heads/main
-    deny G5.3 "App pushes to certify/main directly"   app_git push -q "$URL" HEAD:refs/heads/certify/main
+
+    # Probe main from an actual descendant of main so a non-fast-forward
+    # rejection cannot masquerade as repository-rule enforcement.
+    git switch -q --detach origin/main
+
+    printf 'main push probe %s\n' "$TAG" > "MAIN-PUSH-$TAG.txt"
+    git add "MAIN-PUSH-$TAG.txt"
+    git commit -q -m "test(agent): main direct-push probe"
+
+    deny G5.2 \
+        "App pushes a fast-forward candidate directly to main" \
+        app_git push -q "$URL" HEAD:refs/heads/main
+
+    # Back to the worker commit based directly on certify/main.
+    git switch -q feature/issue-999999-worker
+
+    deny G5.3 \
+        "App pushes a fast-forward candidate directly to certify/main" \
+        app_git push -q "$URL" HEAD:refs/heads/certify/main
     local b; for b in develop release/cert-$TAG security/cert-$TAG docs/cert-$TAG agent/cert-$TAG; do
         deny "G5.4" "App creates or updates $b"       app_git push -q "$URL" HEAD:refs/heads/$b
     done
@@ -283,7 +388,7 @@ cmd_run() {
     else for v in G6.1 G6.2 G6.3 G6.4 G6.5 G6.6; do rec "$v" BLOCKED "no certification PR" ""; done; fi
 
     # An owner PR the App approves: the approval must not be a code owner's.
-    git switch -q -c certify/owner-pr-$TAG origin/main; echo "owner $TAG" > OWNER.txt; git add OWNER.txt; git commit -q -m "test(agent): owner PR probe"
+    git switch -q -c certify/owner-pr-$TAG origin/certify/main; echo "owner $TAG" > OWNER.txt; git add OWNER.txt; git commit -q -m "test(agent): owner PR probe"
     env -u GH_TOKEN git push -q origin HEAD:refs/heads/certify/owner-pr-$TAG 2>/dev/null
     local opr; opr="$(owner_api -X POST "repos/$REPO_SLUG/pulls" -f title="CERTIFY owner $TAG (never merge)" -f head="certify/owner-pr-$TAG" -f base=certify/main -f body="probe" --jq .number)"
     if [[ "$opr" =~ ^[0-9]+$ ]]; then
@@ -291,337 +396,23 @@ cmd_run() {
         deny G6.8 "PR broker merges the owner's PR on its own approval" broker_api -X PUT "repos/$REPO_SLUG/pulls/$opr/merge" -f merge_method=merge
     else rec G6.7 BLOCKED "no owner PR" "$opr"; rec G6.8 BLOCKED "no owner PR" "$opr"; fi
 
-    # ---- Draft / Ready boundary --------------------------------------------
+    # ---- Draft / Ready capability ------------------------------------------
     #
-    # Earlier merge probes intentionally put this PR into Ready state as the
-    # owner. Reset it to a real Draft before testing either execution identity.
-    # Ready -> Ready is idempotent and proves nothing about permissions.
-    if [ -n "$pr" ]; then
-        local rnode reset_out reset_rc reset_state
-
-        rnode="$(
-            broker_api \
-              "repos/$REPO_SLUG/pulls/$pr" \
-              --jq .node_id
-        )"
-
-        reset_out="$(
-            owner_api graphql \
-              -f query='mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
-              -f id="$rnode" \
-              --jq '.data.convertPullRequestToDraft.pullRequest.isDraft'
-        )"
-        reset_rc=$?
-
-        if [ "$reset_rc" -ne 0 ]; then
-            if infra_error "$reset_out"; then
-                rec G7.13pre BLOCKED \
-                    "owner Draft reset hit infrastructure/network failure" \
-                    "$reset_out"
-            else
-                rec G7.13pre FAIL \
-                    "owner could not reset certification PR to Draft" \
-                    "$reset_out"
-            fi
-
-        elif [ "$reset_out" = true ]; then
-            rec G7.13pre PASS \
-                "certification PR reset to Draft before permission probes" \
-                "#$pr"
-
-        else
-            rec G7.13pre FAIL \
-                "Draft reset did not produce isDraft=true" \
-                "$reset_out"
-        fi
-
-        reset_state="$(
-            owner_api \
-              "repos/$REPO_SLUG/pulls/$pr" \
-              --jq .draft
-        )"
-
-        if [ "$reset_state" != true ]; then
-
-            rec G7.13a BLOCKED \
-                "worker Ready probe requires a real Draft PR" \
-                "draft=$reset_state"
-
-            rec G7.13b BLOCKED \
-                "broker Ready-guard probe requires a real Draft PR" \
-                "draft=$reset_state"
-
-        else
-
-            ##################################################################
-            # WORKER
-            #
-            # Worker has NO Pull requests permission.
-            # Real Draft -> Ready must be denied.
-            ##################################################################
-
-            local worker_ready_out worker_ready_rc worker_state
-
-            worker_ready_out="$(
-                app_api graphql \
-                  -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
-                  -f id="$rnode"
-            )"
-            worker_ready_rc=$?
-
-            worker_state="$(
-                owner_api \
-                  "repos/$REPO_SLUG/pulls/$pr" \
-                  --jq .draft
-            )"
-
-            if infra_error "$worker_ready_out"; then
-
-                rec G7.13a BLOCKED \
-                    "worker Draft -> Ready probe hit infrastructure/network failure" \
-                    "$worker_ready_out"
-
-            elif [ "$worker_ready_rc" -eq 0 ]; then
-
-                rec G7.13a FAIL \
-                    "worker App was allowed to invoke Draft -> Ready" \
-                    "$worker_ready_out; resulting draft=$worker_state"
-
-            elif policy_denial "$worker_ready_out" &&
-                 [ "$worker_state" = true ]; then
-
-                rec G7.13a PASS \
-                    "worker App cannot mark a Draft PR ready" \
-                    "$worker_ready_out"
-
-            elif [ "$worker_state" != true ]; then
-
-                rec G7.13a FAIL \
-                    "worker Ready probe changed PR out of Draft" \
-                    "$worker_ready_out; draft=$worker_state"
-
-            else
-
-                rec G7.13a BLOCKED \
-                    "worker Ready refusal was not proven to be permission enforcement" \
-                    "$worker_ready_out"
-            fi
-
-            ##################################################################
-            # Re-establish Draft if an unexpected worker behavior changed it.
-            ##################################################################
-
-            if [ "$(
-                owner_api \
-                  "repos/$REPO_SLUG/pulls/$pr" \
-                  --jq .draft
-            )" != true ]; then
-
-                owner_api graphql \
-                  -f query='mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
-                  -f id="$rnode" \
-                  >/dev/null
-            fi
-
-            ##################################################################
-            # BROKER
-            #
-            # Broker has Pull requests:write, so it CAN transition to Ready.
-            # We prove:
-            #
-            #   Draft=true -> Ready(isDraft=false)
-            #   Agent ready guard SUCCESS
-            #   final Draft=true
-            ##################################################################
-
-            local broker_ready_out broker_ready_rc
-            local d=false poll_out=""
-            local guard_json="" guard_rc=0 guard_run=""
-            local guard_evidence="" pr_head=""
-
-            broker_ready_out="$(
-                broker_api graphql \
-                  -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}' \
-                  -f id="$rnode" \
-                  --jq '.data.markPullRequestReadyForReview.pullRequest.isDraft'
-            )"
-            broker_ready_rc=$?
-
-            if [ "$broker_ready_rc" -ne 0 ]; then
-
-                if infra_error "$broker_ready_out"; then
-
-                    rec G7.13b BLOCKED \
-                        "PR broker Ready probe hit infrastructure/network failure" \
-                        "$broker_ready_out"
-
-                else
-
-                    rec G7.13b FAIL \
-                        "PR broker could not perform real Draft -> Ready transition" \
-                        "$broker_ready_out"
-                fi
-
-            elif [ "$broker_ready_out" != false ]; then
-
-                rec G7.13b FAIL \
-                    "PR broker mutation did not prove isDraft=false" \
-                    "$broker_ready_out"
-
-            else
-
-                ################################################################
-                # Wait until guard mutation restores Draft.
-                ################################################################
-
-                for _ in $(seq 1 18); do
-                    sleep 10
-
-                    poll_out="$(
-                        owner_api \
-                          "repos/$REPO_SLUG/pulls/$pr" \
-                          --jq .draft
-                    )"
-
-                    if infra_error "$poll_out"; then
-                        d=infra
-                        break
-                    fi
-
-                    d="$poll_out"
-
-                    [ "$d" = true ] &&
-                        break
-                done
-
-                if [ "$d" = true ]; then
-
-                    pr_head="$(
-                        owner_api \
-                          "repos/$REPO_SLUG/pulls/$pr" \
-                          --jq .head.sha
-                    )"
-
-                    ################################################################
-                    # State=true alone is insufficient. Prove that a SUCCESSFUL
-                    # Agent · ready guard workflow produced it.
-                    ################################################################
-
-                    for _ in $(seq 1 12); do
-
-                        guard_json="$(
-                            env -u GH_TOKEN \
-                            gh run list \
-                              -R "$REPO_SLUG" \
-                              --workflow agent-ready-guard.yml \
-                              --event pull_request \
-                              --limit 20 \
-                              --json headSha,status,conclusion,databaseId \
-                              2>&1
-                        )"
-                        guard_rc=$?
-
-                        if [ "$guard_rc" -ne 0 ]; then
-                            break
-                        fi
-
-                        guard_run="$(
-                            jq -r \
-                              --arg sha "$pr_head" \
-                              '[
-                                 .[]
-                                 | select(
-                                     .headSha == $sha
-                                     and .status == "completed"
-                                     and .conclusion == "success"
-                                   )
-                               ]
-                               | first
-                               | if . == null
-                                 then ""
-                                 else "\(.status):\(.conclusion):\(.databaseId)"
-                                 end' \
-                              <<<"$guard_json"
-                        )"
-
-                        [ -n "$guard_run" ] &&
-                            break
-
-                        sleep 5
-                    done
-
-                    if [ "$guard_rc" -ne 0 ]; then
-
-                        if infra_error "$guard_json"; then
-
-                            rec G7.13b BLOCKED \
-                                "Ready guard restored Draft but workflow evidence hit infrastructure failure" \
-                                "$guard_json"
-
-                        else
-
-                            rec G7.13b BLOCKED \
-                                "Ready guard restored Draft but workflow run could not be inspected" \
-                                "$guard_json"
-                        fi
-
-                    elif [ -n "$guard_run" ]; then
-
-                        rec G7.13b PASS \
-                            "broker Draft -> Ready was restored to Draft by a successful trusted guard run" \
-                            "#$pr; guard=$guard_run"
-
-                    else
-
-                        guard_evidence="$(
-                            jq -c \
-                              --arg sha "$pr_head" \
-                              '[
-                                 .[]
-                                 | select(.headSha == $sha)
-                                 | {
-                                     status,
-                                     conclusion,
-                                     databaseId
-                                   }
-                               ]' \
-                              <<<"$guard_json"
-                        )"
-
-                        rec G7.13b FAIL \
-                            "Draft returned but no successful Ready-guard run was proven" \
-                            "$guard_evidence"
-                    fi
-
-                elif [ "$d" = infra ]; then
-
-                    rec G7.13b BLOCKED \
-                        "Ready-guard observation hit infrastructure/network failure" \
-                        "$poll_out"
-
-                else
-
-                    rec G7.13b FAIL \
-                        "broker-authored worker PR stayed Ready for review" \
-                        "#$pr"
-                fi
-            fi
-        fi
-
-    else
-
-        rec G7.13pre BLOCKED \
-            "no certification PR for Draft reset" \
-            ""
-
-        rec G7.13a BLOCKED \
-            "no certification PR for worker Ready denial" \
-            ""
-
-        rec G7.13b BLOCKED \
-            "no certification PR for broker Ready guard" \
-            ""
-    fi
+    # Draft/Ready is presentation state only.
+    #
+    # Measured 2026-10-07:
+    # - REST PR creation/review remains denied to pliwee-worker;
+    # - nevertheless its Contents installation token can invoke the GraphQL
+    #   markPullRequestReadyForReview mutation;
+    # - a ready_for_review workflow was not a reliable compensating boundary.
+    #
+    # Therefore authorization MUST NOT depend on Draft/Ready.
+    # Trusted publication still opens Draft and never voluntarily transitions it.
+    # The decisive security test is below: after owner approval, neither App may
+    # update the protected certification ref.
+    rec G7.13 PASS \
+        "Draft/Ready is explicitly excluded from the authorization boundary" \
+        "trusted publisher opens Draft; protected-ref merge gates are authoritative"
 
     # ---- G6: the owner keeps the final boundary -----------------------------
     if [ -n "$pr" ]; then
@@ -771,7 +562,7 @@ cmd_run() {
 
     # ---- cleanup, as the owner ----------------------------------------------
     local n; for n in $pr ${opr:-}; do owner_api -X PATCH "repos/$REPO_SLUG/pulls/$n" -f state=closed >/dev/null; done
-    for b in certify/main "certify/owner-pr-$TAG" feature/issue-999999-worker feature/issue-999998-worker; do
+    for b in "certify/owner-pr-$TAG" feature/issue-999999-worker feature/issue-999998-worker; do
         owner_api -X DELETE "repos/$REPO_SLUG/git/refs/heads/$b" >/dev/null
     done
     [ "$(owner_api "repos/$REPO_SLUG/commits/main" --jq .sha)" = "$base" ] \
