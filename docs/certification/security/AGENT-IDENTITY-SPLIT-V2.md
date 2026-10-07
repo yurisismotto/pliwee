@@ -79,33 +79,41 @@ The refined certification now:
 
 Production main remains outside destructive certification probes.
 
-## Certification refinement — protected-ref boundary
+## Certification refinement — ephemeral protected destination
 
-The next V2 run measured two additional platform facts.
+The persistent `certify/main` design is superseded.
 
-First, `certify/main` is protected by non-fast-forward and deletion rules. The
-old harness attempted to force-reset and delete that ref between runs. Those
-operations were correctly refused, leaving a stale certification base and
-causing artificial merge conflicts. `certify/main` is now a persistent
-certification ref. Before each run, the owner advances it by merging current
-`main` into it, and all certification PR branches are created directly from
-that synchronized ref.
+Measurement showed that its protection correctly refused direct
+synchronization. Reusing that branch also allowed previous certification
+history to contaminate authorization probes with non-fast-forward or
+merge-conflict failures.
 
-Second, Draft/Ready cannot be treated as an authorization boundary.
-`pliwee-worker` was measured successfully invoking the GraphQL
-`markPullRequestReadyForReview` mutation despite its REST Pull Request
-operations being denied and despite no declared Pull requests permission.
-The ready-for-review compensating workflow was not a reliable barrier for that
-mutation.
+Every Identity V2 certification run now creates a unique destination:
 
-Accordingly:
+`certify/run-<tag>`
 
-- autonomous publication still opens Draft for UX;
-- trusted code never intentionally marks its PR Ready;
-- Draft/Ready is explicitly advisory;
-- the unreliable ready guard is removed;
-- certification succeeds only if neither execution App can update the
-  protected certification ref after owner approval;
-- only the owner may perform the disposable certification merge.
+The owner creates that branch exactly at the current production `main` SHA.
 
-Production `main` remains untouched by certification merges.
+`certify/run-*` is not excluded from the repository's generic owner-only
+branch ruleset. Creation, update and deletion of the certification destination
+therefore require the owner/admin bypass.
+
+The worker probe is created directly on top of that fresh destination.
+Consequently:
+
+- the worker direct-push test is a genuine fast-forward candidate;
+- the certification PR is conflict-free by construction;
+- merge denials test authorization rather than stale Git ancestry;
+- the PR broker must remain unable to merge;
+- the worker must remain unable to update the protected destination even after
+  owner approval;
+- only the owner may perform the disposable certification merge;
+- the owner deletes the ephemeral destination afterward;
+- production `main` is never rewritten by certification.
+
+Draft/Ready remains advisory UX and is not a merge-authorization boundary.
+
+The legacy `certify/main` ref and its two dedicated rulesets are retained
+temporarily only as historical infrastructure. They are not used by the V2
+certifier and can be retired after a completely green certification and
+canary.
