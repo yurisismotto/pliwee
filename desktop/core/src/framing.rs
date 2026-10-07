@@ -60,3 +60,88 @@ pub async fn read_envelope<R: AsyncRead + Unpin>(r: &mut R) -> Result<pliwee_pro
 
     Ok(pliwee_proto::v1::Envelope::decode(&body[..])?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    /// A stream holding `prefix` as the length, followed by `body`.
+    fn stream(prefix: u32, body: &[u8]) -> Cursor<Vec<u8>> {
+        let mut bytes = prefix.to_be_bytes().to_vec();
+        bytes.extend_from_slice(body);
+        Cursor::new(bytes)
+    }
+
+    #[tokio::test]
+    async fn zero_length_prefix_is_a_protocol_error() {
+        let mut r = stream(0, &[]);
+        let err = read_envelope(&mut r)
+            .await
+            .expect_err("zero length must be refused");
+        assert!(
+            matches!(err, Error::Protocol("zero-length frame")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_length_prefix_consumes_only_the_prefix() {
+        let mut r = stream(0, &[0xAA; 16]);
+        let err = read_envelope(&mut r)
+            .await
+            .expect_err("zero length must be refused");
+        assert!(
+            matches!(err, Error::Protocol(_)),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(r.position(), 4, "nothing past the prefix may be read");
+    }
+
+    /// Only the prefix is present. Reaching for a body would end in `Closed`;
+    /// `FrameTooLarge` proves the refusal came from the prefix alone.
+    #[tokio::test]
+    async fn prefix_one_over_the_limit_is_refused_without_a_body() {
+        let mut r = stream(MAX_FRAME_LEN + 1, &[]);
+        let err = read_envelope(&mut r)
+            .await
+            .expect_err("oversized frame must be refused");
+        assert!(
+            matches!(err, Error::FrameTooLarge(len, limit)
+                if len == MAX_FRAME_LEN + 1 && limit == MAX_FRAME_LEN),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn prefix_one_over_the_limit_leaves_a_present_body_unread() {
+        let body = vec![0u8; (MAX_FRAME_LEN + 1) as usize];
+        let mut r = stream(MAX_FRAME_LEN + 1, &body);
+        let err = read_envelope(&mut r)
+            .await
+            .expect_err("oversized frame must be refused");
+        assert!(
+            matches!(err, Error::FrameTooLarge(..)),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            r.position(),
+            4,
+            "the body must not be read before the check"
+        );
+    }
+
+    /// The other side of the boundary: `MAX_FRAME_LEN` itself passes the length
+    /// check, the whole body is read, and only decoding fails (field number 0
+    /// is not valid protobuf).
+    #[tokio::test]
+    async fn prefix_at_the_limit_passes_the_length_check() {
+        let body = vec![0u8; MAX_FRAME_LEN as usize];
+        let mut r = stream(MAX_FRAME_LEN, &body);
+        let err = read_envelope(&mut r)
+            .await
+            .expect_err("all-zero body is not an envelope");
+        assert!(matches!(err, Error::Decode(_)), "unexpected error: {err:?}");
+        assert_eq!(r.position(), 4 + u64::from(MAX_FRAME_LEN));
+    }
+}
