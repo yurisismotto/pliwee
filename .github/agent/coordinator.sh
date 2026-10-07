@@ -328,9 +328,63 @@ list_open_sessions() {
     ' <<<"$issues"
 }
 
+# A freshly-created issue may be readable by number before it appears in the
+# repository's open-issue listing. The first tick must not run until the exact
+# session it will discover is visible through that same listing.
+#
+# Return:
+#   0 exact session visible, and it is the only open session
+#   1 API/measurement error
+#   3 not visible within the bounded number of attempts
+#   4 another/multiple session(s) became visible
+wait_session_visible() {
+    local n="${1:-}" attempts="${2:-15}" delay="${3:-2}"
+    local sessions count found i
+
+    [[ "$n" =~ ^[1-9][0-9]*$ ]] || return 1
+    [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || return 1
+    [[ "$delay" =~ ^[0-9]+$ ]] || return 1
+
+    for ((i = 1; i <= attempts; i++)); do
+        sessions="$(list_open_sessions)" || return 1
+        count="$(jq 'length' <<<"$sessions")"
+
+        if [ "$count" -gt 1 ]; then
+            return 4
+        fi
+
+        if [ "$count" -eq 1 ]; then
+            found="$(jq -r '.[0].number' <<<"$sessions")"
+            [ "$found" = "$n" ] && return 0
+            return 4
+        fi
+
+        if [ "$i" -lt "$attempts" ]; then
+            sleep "$delay"
+        fi
+    done
+
+    return 3
+}
+
+abort_session_start() {
+    local n="${1:-}" reason="${2:-visibility barrier failed}"
+
+    [[ "$n" =~ ^[1-9][0-9]*$ ]] || return 1
+
+    gh_bot issue comment "$n" -R "$REPO_SLUG" \
+        --body "Session startup aborted before any work was promoted: $reason" \
+        >/dev/null 2>&1 || true
+
+    gh_bot api -X PATCH "repos/$REPO_SLUG/issues/$n" \
+        -f state=closed \
+        -f state_reason=not_planned \
+        >/dev/null 2>&1 || true
+}
+
 cmd_start() {
     need_live || return 1
-    local open sessions limits sha now body url
+    local open sessions limits sha now body url sn wait_rc
     sessions="$(list_open_sessions)" \
         || { fail "start: could not list sessions"; return 1; }
     open="$(jq 'length' <<<"$sessions")"
@@ -343,7 +397,41 @@ cmd_start() {
         "$(date -u -d "@$now" +%FT%TZ)" "$sha" "$limits")"
     url="$(gh_bot issue create -R "$REPO_SLUG" --title "Agent night session $(date -u -d "@$now" +%F)" --label agent:session --body "$body")" \
         || { fail "start: could not open the session issue"; return 1; }
-    printf 'ok    session opened: %s\n' "$url"
+
+    sn="${url##*/}"
+    if ! [[ "$sn" =~ ^[1-9][0-9]*$ ]]; then
+        fail "start: could not determine the created session number from '$url'"
+        return 1
+    fi
+
+    local created
+    created="$(gh_bot api "repos/$REPO_SLUG/issues/$sn")" || {
+        abort_session_start "$sn" "direct validation could not read the newly-created session"
+        fail "start: could not validate newly-created session #$sn directly"
+        return 1
+    }
+
+    if ! jq -e --argjson n "$sn" --arg bot "$BOT" '
+        .number == $n
+        and .state == "open"
+        and .user.login == $bot
+        and ([.labels[].name] | index("agent:session") != null)
+    ' >/dev/null <<<"$created"; then
+        abort_session_start "$sn" "direct validation rejected the newly-created session"
+        fail "start: newly-created session #$sn failed direct validation"
+        return 1
+    fi
+
+    if wait_session_visible "$sn" 15 2; then
+        printf 'ok    session opened and visible: %s\n' "$url"
+        return 0
+    else
+        wait_rc=$?
+    fi
+
+    abort_session_start "$sn" "visibility barrier returned $wait_rc"
+    fail "start: session #$sn was created but never became safely discoverable (visibility rc=$wait_rc)"
+    return 1
 }
 
 # snapshot — everything `decide` reads, or nothing: a failed fetch is exit 1.
@@ -790,7 +878,27 @@ set -- "${args[@]}"
 out() { if [ -n "$jqx" ]; then jq -r "$jqx" "$1"; else cat "$1"; fi; }
 case "$1 $2" in
   "api repos/o/r/commits/main")                       out "$F/main.json" ;;
-  "api repos/o/r/issues?state=open"*)                 out "$F/issues.json" ;;
+  "api repos/o/r/issues?state=open"*)
+      cfile="$F/open-list-count"
+      c="$(cat "$cfile" 2>/dev/null || echo 0)"
+      c="${c:-0}"
+      c=$((c + 1))
+      printf '%s\n' "$c" > "$cfile"
+
+      lag="$(cat "$F/session-lag-calls" 2>/dev/null || echo 0)"
+      lag="${lag:-0}"
+      if [ "$c" -le "$lag" ]; then
+          jq '
+            [
+              .[] |
+              select(([.labels[].name] | index("agent:session")) == null)
+            ]
+          ' "$F/issues.json" > "$F/issues-visible.json"
+          out "$F/issues-visible.json"
+      else
+          out "$F/issues.json"
+      fi
+      ;;
   "api repos/o/r/issues/"*"/comments?per_page=100")   n="${2#repos/o/r/issues/}"; n="${n%%/*}"; out "$F/comments-$n.json" 2>/dev/null || echo '[]' ;;
   "api repos/o/r/issues/"*"/dependencies/blocked_by") echo '[]' ;;
   "api repos/o/r/actions/runs/"*)                     out "$F/run.json" ;;
@@ -833,6 +941,49 @@ FAKE
         }
       ]
     ' > "$F/issues.json"
+
+    # Reproduce the live #81 race: the exact session exists in the
+    # fixture while the open-issue listing omits it for the first observations.
+    run_visibility_probe() {
+        local attempts="$1"
+
+        PATH="$BIN:$PATH" \
+        FAKE_GH_DIR="$F" \
+        GH_TOKEN=ghs_bot \
+        REPO_SLUG=o/r \
+            wait_session_visible 100 "$attempts" 0
+    }
+
+    printf '2\n' > "$F/session-lag-calls"
+    printf '0\n' > "$F/open-list-count"
+
+    if run_visibility_probe 4; then
+        if [ "$(cat "$F/open-list-count")" = 3 ]; then
+            ok "session visibility barrier WAITS through two stale listings and then accepts the exact session"
+        else
+            notok "visibility barrier used an unexpected number of polls: $(cat "$F/open-list-count")"
+        fi
+    else
+        notok "session visibility barrier did not recover from a bounded consistency lag"
+    fi
+
+    printf '99\n' > "$F/session-lag-calls"
+    printf '0\n' > "$F/open-list-count"
+
+    if run_visibility_probe 3; then
+        notok "session visibility barrier accepted a session that never became visible"
+    else
+        rc=$?
+        if [ "$rc" -eq 3 ] && [ "$(cat "$F/open-list-count")" = 3 ]; then
+            ok "session visibility barrier FAILS CLOSED after its bounded attempts"
+        else
+            notok "visibility timeout returned rc=$rc after $(cat "$F/open-list-count") polls"
+        fi
+    fi
+
+    printf '0\n' > "$F/session-lag-calls"
+    printf '0\n' > "$F/open-list-count"
+
     run_tick() { : > "$F/calls.log"
         env PATH="$BIN:$PATH" FAKE_GH_DIR="$F" GH_TOKEN=ghs_bot PLIWEE_REPO=o/r PLIWEE_OWNER_LOGIN=owner \
             PLIWEE_AGENT_NIGHT="${1:-enabled}" PLIWEE_AGENT_SANDBOX=required PLIWEE_REMOTE_URL="$T/remote.git" \
