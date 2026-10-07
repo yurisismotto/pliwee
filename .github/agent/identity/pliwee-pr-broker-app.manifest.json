@@ -1,7 +1,7 @@
 {
-  "name": "pliwee-worker",
+  "name": "pliwee-pr-broker",
   "url": "https://github.com/yurisismotto/pliwee/blob/main/docs/development/AGENT-WORKFLOW.md#execution-identity",
-  "description": "Execution identity of the Pliwee autonomous worker: pushes feature/issue-N-worker branches and promotes issues. It cannot open/update PRs or merge.",
+  "description": "PR-only broker for Pliwee autonomous development. Opens Draft PRs; has no Contents permission and therefore cannot merge.",
   "public": false,
   "redirect_url": "https://github.com/yurisismotto/pliwee",
   "hook_attributes": {
@@ -11,9 +11,6 @@
   "default_events": [],
   "default_permissions": {
     "metadata": "read",
-    "contents": "write",
-    "issues": "write",
-    "checks": "read",
-    "actions": "read"
+    "pull_requests": "write"
   }
 }
