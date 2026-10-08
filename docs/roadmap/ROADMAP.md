@@ -250,6 +250,20 @@ The issues record the same relationships as GitHub sub-issues and
 
 ## Decisions needed before implementation
 
+The canonical readiness/status view is
+[DECISION-REGISTER.md](DECISION-REGISTER.md).
+
+The V2 P0 topology and pairing decision is already resolved by ADR-0022; the
+trust-group decision is resolved by ADR-0023; capability-negotiation,
+grant-widening and basic presence questions are resolved by ADR-0024; and the
+implementation details ADR-0022 left to a SPEC are fixed by
+[MULTI-DEVICE-MESH-V2.md](../architecture/MULTI-DEVICE-MESH-V2.md).
+
+Rows below are retained because they explain why each decision exists. A row
+is not evidence that a decision is still open; the decision register gives
+that state.
+
+
 | Decision | Why it is needed | Issue |
 | --- | --- | --- |
 | Peer-to-peer topology | ADR-0005 fixes "desktop advertises, phone dials"; any-to-any has to supersede it | [#4](https://github.com/yurisismotto/pliwee/issues/4) |

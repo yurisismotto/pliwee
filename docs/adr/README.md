@@ -28,3 +28,4 @@ alternatives that were actually considered, and what the decision costs.
 | 0021 | Reserved for macOS desktop integration (`feature/macos-desktop-v1`) | Proposed on macOS branch; not yet on `main` |
 | [0022](ADR-0022-any-to-any-topology-and-symmetric-pairing.md) | Any-to-any topology and symmetric pairing | Accepted (2026-10-04) · supersedes 0005's fixed direction and 0006's pairing roles, amends 0009 and 0013 · not yet implemented; SPEC not yet written |
 | [0023](ADR-0023-pliwee-space-trust-model.md) | Pliwee Space: pairwise trust for the multi-device group | Accepted (2026-10-04) · amends 0008 (cross-peer re-emission rule only) · not yet implemented (#6 open) |
+| [0024](ADR-0024-p0-capability-negotiation-and-presence.md) | P0 capability negotiation and trusted-peer presence baseline | Accepted (2026-10-07) · keeps grant widening reconnect-only, HELLO ids-only, presence derived from trusted session state |
