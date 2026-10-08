@@ -83,7 +83,11 @@ gx() { ga_exec "$DOMAIN" "$@"; }
 # pliweed running and then aborted "no pliweed process found after start", and
 # the root count beside it would have read 0 whatever ran as root.
 # harness-selftests.sh runs both against a real process called pliweed.
-L4_PS='ps -C pliweed -o user=,pid=,args='
+# The user column has an explicit width: procps truncates a width-less `user=`
+# longer than 8 characters to 7 and a `+`, so a login like `pliwee-agent` read
+# back as `pliwee-+` and the self-test went red over its own capture (#97).
+# 32 is utmp's user-name field (UT_NAMESIZE), the conventional login limit.
+L4_PS='ps -C pliweed -o user:32=,pid=,args='
 L4_ROOT_AWK='$1 == "root" { n++ } END { print n + 0 }'
 gu() {
     ga_exec "$DOMAIN" "runuser -u $GUEST_USER -- env XDG_RUNTIME_DIR=/run/user/$GUEST_UID \
