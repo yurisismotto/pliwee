@@ -79,6 +79,22 @@ fn version_negotiation_picks_the_highest_common_version() {
 }
 
 #[test]
+fn this_build_still_speaks_only_protocol_version_1() {
+    // The protocol-version-2 schema (SessionClose, GitHub #90) is dormant
+    // scaffolding. V2 behaviour is used only when both peers negotiate 2
+    // (MULTI-DEVICE-MESH-V2.md §1), so raising the maximum before that
+    // behaviour exists would let a half-built V2 negotiate as V2.
+    assert_eq!(PROTOCOL_VERSION_MIN, 1);
+    assert_eq!(PROTOCOL_VERSION_MAX, 1);
+    // A V2 peer is met at version 1.
+    assert_eq!(negotiate_version(1, 2), Some(1));
+    assert_eq!(negotiate_version(2, 2), None);
+    // And discovery advertises the same range.
+    let txt = pliwee_core::discovery::build_txt("a1b2c3d4e5f60718", "Desk");
+    assert_eq!(txt.get("pv").map(String::as_str), Some("1-1"));
+}
+
+#[test]
 fn version_negotiation_rejects_disjoint_ranges() {
     // Peer is entirely newer than us.
     assert_eq!(

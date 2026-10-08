@@ -306,6 +306,62 @@ async fn changing_the_protocol_version_mid_connection_terminates_the_session() {
     );
 }
 
+#[tokio::test]
+async fn a_v2_peer_is_negotiated_down_to_v1_and_session_close_is_refused() {
+    // The SessionClose schema (GitHub #90) is dormant: this build advertises
+    // and negotiates version 1, and refuses SessionClose on a V1 session as
+    // an unexpected body, closing it. (A legacy V1 binary decodes it as an
+    // unset body and closes too, per ADR-0010; this test proves this build.)
+    let server = TestServer::start().await;
+    let phone = TestClient::new("Galaxy S25");
+    let mut tls = trusted_raw_connection(&server, &phone).await;
+
+    framing::write_envelope(&mut tls, &envelope(1, vec![1; 16], 1, hello(&phone, 1, 2)))
+        .await
+        .expect("hello");
+    let ack = read_ack(&mut tls).await;
+    assert_eq!(ack.status, v1::HelloStatus::Trusted as i32);
+    assert_eq!(ack.negotiated_protocol_version, 1);
+
+    // Before: the session is alive and answers a ping.
+    framing::write_envelope(
+        &mut tls,
+        &envelope(
+            1,
+            vec![2; 16],
+            2,
+            v1::envelope::Body::Ping(v1::Ping { payload: vec![5] }),
+        ),
+    )
+    .await
+    .expect("ping");
+    let pong = framing::read_envelope(&mut tls).await.expect("pong");
+    assert!(
+        matches!(pong.body, Some(v1::envelope::Body::Pong(ref p)) if p.payload == [5]),
+        "{pong:?}"
+    );
+
+    // After: SessionClose on a V1 session terminates it.
+    framing::write_envelope(
+        &mut tls,
+        &envelope(
+            1,
+            vec![3; 16],
+            3,
+            v1::envelope::Body::SessionClose(v1::SessionClose {
+                reason: v1::SessionCloseReason::Superseded as i32,
+            }),
+        ),
+    )
+    .await
+    .expect("session close");
+    let result = framing::read_envelope(&mut tls).await;
+    assert!(
+        matches!(result, Err(Error::Closed) | Err(Error::Io(_))),
+        "SessionClose on a version-1 session must terminate it, got {result:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // State machine enforcement
 // ---------------------------------------------------------------------------
