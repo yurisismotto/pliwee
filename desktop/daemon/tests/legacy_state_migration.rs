@@ -161,6 +161,7 @@ fn peer(name: &str, grants: &[&str]) -> TrustedPeer {
         hidden: false,
         clipboard_policy: ClipboardPolicy::default(),
         notification_policy: NotificationPolicy::default(),
+        address_hints: Vec::new(),
     }
 }
 
