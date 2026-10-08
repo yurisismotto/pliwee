@@ -154,7 +154,7 @@ class ClipboardTruthfulnessTest {
         fingerprint = fp(fingerprintByte),
         pairedAtUnix = 0,
         grantedCapabilities = capabilities.toSet(),
-        addresses = emptyList(),
+        addressHints = emptyList(),
         clipboardPolicy = policy,
     )
 

@@ -166,7 +166,7 @@ class PlayStoreScreenshots {
             BatteryCapability.ID,
             NotificationsCapability.ID,
         ),
-        addresses = emptyList(),
+        addressHints = emptyList(),
         notificationPolicy = NotificationPolicy(
             allowMirror = true,
             allowedApps = setOf("com.example.calendar", "com.example.messages"),

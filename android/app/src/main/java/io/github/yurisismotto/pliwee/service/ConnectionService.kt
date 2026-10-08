@@ -22,7 +22,6 @@ import io.github.yurisismotto.pliwee.identity.Fingerprint
 import io.github.yurisismotto.pliwee.net.ConnectResult
 import io.github.yurisismotto.pliwee.net.ConnectionCoordinator
 import io.github.yurisismotto.pliwee.net.DialResult
-import io.github.yurisismotto.pliwee.net.Endpoints
 import io.github.yurisismotto.pliwee.net.FailureKind
 import io.github.yurisismotto.pliwee.net.LinkState
 import io.github.yurisismotto.pliwee.net.PeerConnection
@@ -272,11 +271,10 @@ class ConnectionService : LifecycleService() {
                 )
                 // Remember only an address that actually worked, so the fast
                 // path stays the one that was proven, not merely advertised.
+                // Established means the pinned handshake and HELLO both
+                // succeeded, which is what makes this a successful hint.
                 runCatching {
-                    app.trustStore.rememberAddresses(
-                        peer.fingerprint,
-                        listOf(Endpoints.format(address)),
-                    )
+                    app.trustStore.recordSuccessfulAddress(peer.fingerprint, address)
                 }
                 try {
                     connection.run(lifecycleScope)

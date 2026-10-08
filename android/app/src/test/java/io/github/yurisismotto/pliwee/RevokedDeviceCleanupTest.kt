@@ -8,6 +8,7 @@ import io.github.yurisismotto.pliwee.capability.SensitiveCapabilities
 import io.github.yurisismotto.pliwee.clipboard.ClipboardPolicy
 import io.github.yurisismotto.pliwee.identity.Fingerprint
 import io.github.yurisismotto.pliwee.notifications.NotificationPolicy
+import io.github.yurisismotto.pliwee.store.AddressHint
 import io.github.yurisismotto.pliwee.store.PeerTarget
 import io.github.yurisismotto.pliwee.store.TrustStore
 import io.github.yurisismotto.pliwee.ui.UiMapping
@@ -77,7 +78,7 @@ class RevokedDeviceCleanupTest {
         fingerprint = f,
         pairedAtUnix = 1_700_000_000L,
         grantedCapabilities = grants,
-        addresses = addresses,
+        addressHints = addresses.mapNotNull(AddressHint::parseLegacy),
         revoked = revoked,
         hidden = hidden,
         clipboardPolicy = ClipboardPolicy(
@@ -92,7 +93,7 @@ class RevokedDeviceCleanupTest {
     )
 
     private fun merge(existing: TrustStore.TrustedPeer?, paired: TrustStore.TrustedPeer) =
-        TrustStore.TrustedPeer.mergePairing(existing, paired, maxAddresses = 4)
+        TrustStore.TrustedPeer.mergePairing(existing, paired)
 
     /** What `PliweeApp.pair` builds from a session that has just come up. */
     private fun freshlyPaired(f: Fingerprint = fedora, name: String = "Fedora") = peer(
@@ -165,8 +166,8 @@ class RevokedDeviceCleanupTest {
         assertEquals(
             "a remembered address is a convenience for dialling something " +
                 "this phone has just decided not to dial",
-            emptyList<String>(),
-            revoked.addresses,
+            emptyList<AddressHint>(),
+            revoked.addressHints,
         )
         // Denied rather than merely default: a default policy serializes as
         // `allowMirror: true`, and its `knownApps` is every application on
@@ -207,7 +208,7 @@ class RevokedDeviceCleanupTest {
         assertEquals("", tombstone.deviceName)
         assertEquals(0L, tombstone.pairedAtUnix)
         assertEquals(emptySet<String>(), tombstone.grantedCapabilities)
-        assertEquals(emptyList<String>(), tombstone.addresses)
+        assertEquals(emptyList<AddressHint>(), tombstone.addressHints)
         assertEquals(ClipboardPolicy.DENIED, tombstone.clipboardPolicy)
         assertEquals(NotificationPolicy.DENIED, tombstone.notificationPolicy)
         assertTrue(tombstone.notificationPolicy.knownApps.isEmpty())
@@ -373,7 +374,7 @@ class RevokedDeviceCleanupTest {
         assertTrue(merged.notificationPolicy.allowedApps.isEmpty())
 
         // And the stale address is not remembered back into the record.
-        assertEquals(listOf("192.168.68.99:55432"), merged.addresses)
+        assertEquals(listOf("192.168.68.99:55432"), merged.addressHints.map { it.format() })
     }
 
     /**
@@ -479,7 +480,7 @@ class RevokedDeviceCleanupTest {
         assertTrue(restored.hidden)
         assertEquals("", restored.deviceName)
         assertEquals(emptySet<String>(), restored.grantedCapabilities)
-        assertEquals(emptyList<String>(), restored.addresses)
+        assertEquals(emptyList<AddressHint>(), restored.addressHints)
     }
 
     @Test
