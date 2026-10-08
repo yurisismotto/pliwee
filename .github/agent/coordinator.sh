@@ -80,8 +80,8 @@ def stop($why; $class): {action: "STOP", reason: $why, class: $class};
     elif ($ss.start_main_sha | length) == 0 then stop("the session records no main SHA"; "FAILED_INFRA")
     elif $s.main_sha != $ss.start_main_sha then stop("main moved during the session: \($ss.start_main_sha) -> \($s.main_sha)"; "FAILED_INFRA")
     elif ($s.now - $ss.started_at) > ($L.max_hours * 3600) then stop("the session ran past \($L.max_hours) h"; "LIMIT")
-    elif ($res | map(.class) | any(. as $c | ["SECURITY","FAILED_INFRA","OWNER_DECISION_REQUIRED"] | index($c))) then
-         stop("a result needs the owner: \($res | map(select(.class as $c | ["SECURITY","FAILED_INFRA","OWNER_DECISION_REQUIRED"] | index($c))) | .[-1] | "#\(.issue) \(.class)")"; "STOPPED")
+    elif ($res | map(.class) | any(. as $c | ["SECURITY","FAILED_INFRA"] | index($c))) then
+         stop("a fatal result stops autonomous execution: \($res | map(select(.class as $c | ["SECURITY","FAILED_INFRA"] | index($c))) | .[-1] | "#\(.issue) \(.class)")"; "STOPPED")
     elif $consecutive >= $L.max_consecutive_failures then stop("\($consecutive) consecutive failures"; "LIMIT")
     elif ($working | length) > 1 then stop("two issues hold the lock: \($working | map(.number))"; "SECURITY")
     elif ($working | length) == 1 then
@@ -757,9 +757,10 @@ selftest() {
     expect "STOPs after MAX_CONSECUTIVE_FAILURES"            "$s4" STOP "" "consecutive failures"
     expect "a PASS resets the consecutive count"             "$(add_led "$s4" '{"event":"result","issue":23,"class":"PASS"}')" PROMOTE 5
     local c
-    for c in SECURITY FAILED_INFRA OWNER_DECISION_REQUIRED; do
-        expect "STOPs after a $c result"                     "$(add_led "$s1" "{\"event\":\"result\",\"issue\":21,\"class\":\"$c\"}")" STOP "" "needs the owner"
+    for c in SECURITY FAILED_INFRA; do
+        expect "STOPs after a fatal $c result"               "$(add_led "$s1" "{\"event\":\"result\",\"issue\":21,\"class\":\"$c\"}")" STOP "" "fatal result"
     done
+    expect "continues after an OWNER_DECISION_REQUIRED result" "$(add_led "$s1" '{"event":"result","issue":21,"class":"OWNER_DECISION_REQUIRED"}')" PROMOTE 5
     expect "continues after a BLOCKED result"                "$(add_led "$s1" '{"event":"result","issue":21,"class":"BLOCKED"}')" PROMOTE 5
     local s5; s5="$(add_led "$(add_led "$(add_issue "$S" "$(iss 8 '["agent:queued"]')")" '{"event":"promote","issue":8,"at":1}')" '{"event":"promote","issue":8,"at":2}')"
     expect "does not re-promote an issue past its retries (no infinite retry)" "$s5" IDLE

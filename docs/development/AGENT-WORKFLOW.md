@@ -184,6 +184,17 @@ them. Implementation issues should be cut from them once their ADRs and SPECs
 exist. [`.github/ISSUE_TEMPLATE/agent-task.md`](../../.github/ISSUE_TEMPLATE/agent-task.md)
 gives the shape.
 
+For a night session, a result of `BLOCKED` or
+`OWNER_DECISION_REQUIRED` is **issue-scoped**. The issue is left labelled for
+the owner and is not picked up again, but the coordinator continues with the
+next independent eligible issue. One unresolved design question must not waste
+the rest of an unattended night.
+
+`SECURITY` and `FAILED_INFRA` remain **session-fatal**. They indicate that the
+execution boundary or the trusted infrastructure can no longer be assumed
+safe/correct. Movement of protected `main`, multiple session locks, the kill
+switch and session limits remain session-level stop conditions as well.
+
 ## The dependency gate
 
 Two halves, both mandatory:
