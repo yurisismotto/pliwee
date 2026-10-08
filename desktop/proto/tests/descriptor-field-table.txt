@@ -22,6 +22,8 @@ file <root>/v1/core.proto package=<root>.v1
   enum <root>.v1.ErrorCode.ERROR_CODE_MALFORMED = 5
   enum <root>.v1.ErrorCode.ERROR_CODE_INTERNAL = 6
   enum <root>.v1.ErrorCode.ERROR_CODE_RATE_LIMITED = 7
+  enum <root>.v1.SessionCloseReason.SESSION_CLOSE_REASON_UNSPECIFIED = 0
+  enum <root>.v1.SessionCloseReason.SESSION_CLOSE_REASON_SUPERSEDED = 1
 message <root>.v1.DeviceInfo
   field <root>.v1.DeviceInfo.device_id = 1 label=Optional type=String type_name= oneof=None proto3_optional=false
   field <root>.v1.DeviceInfo.device_name = 2 label=Optional type=String type_name= oneof=None proto3_optional=false
@@ -53,6 +55,8 @@ message <root>.v1.Error
   field <root>.v1.Error.code = 1 label=Optional type=Enum type_name=.<root>.v1.ErrorCode oneof=None proto3_optional=false
   field <root>.v1.Error.message = 2 label=Optional type=String type_name= oneof=None proto3_optional=false
   field <root>.v1.Error.fatal = 3 label=Optional type=Bool type_name= oneof=None proto3_optional=false
+message <root>.v1.SessionClose
+  field <root>.v1.SessionClose.reason = 1 label=Optional type=Enum type_name=.<root>.v1.SessionCloseReason oneof=None proto3_optional=false
 file <root>/v1/envelope.proto package=<root>.v1
   import <root>/v1/core.proto
   java_package=io.github.yurisismotto.<root>.proto outer=EnvelopeProto multiple=true
@@ -71,6 +75,7 @@ message <root>.v1.Envelope
   field <root>.v1.Envelope.pong = 22 label=Optional type=Message type_name=.<root>.v1.Pong oneof=Some(0) proto3_optional=false
   field <root>.v1.Envelope.error = 23 label=Optional type=Message type_name=.<root>.v1.Error oneof=Some(0) proto3_optional=false
   field <root>.v1.Envelope.capability_message = 24 label=Optional type=Message type_name=.<root>.v1.CapabilityMessage oneof=Some(0) proto3_optional=false
+  field <root>.v1.Envelope.session_close = 25 label=Optional type=Message type_name=.<root>.v1.SessionClose oneof=Some(0) proto3_optional=false
   oneof <root>.v1.Envelope.body
 message <root>.v1.CapabilityMessage
   field <root>.v1.CapabilityMessage.capability_id = 1 label=Optional type=String type_name= oneof=None proto3_optional=false
