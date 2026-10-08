@@ -13,7 +13,8 @@ Accepted is not implemented. The tree still implements the V1 topology of
 [ADR-0005](ADR-0005-lan-discovery-mdns.md),
 [ADR-0006](ADR-0006-device-identity-and-pairing.md) and
 [ADR-0013](ADR-0013-file-transfer-data-stream.md) until the implementation
-lands, and that implementation needs a SPEC that does not exist yet
+lands. The implementation details are fixed by
+[MULTI-DEVICE-MESH-V2.md](../architecture/MULTI-DEVICE-MESH-V2.md)
 ([§Notes](#notes)).
 
 **Relationship to earlier ADRs.**
