@@ -315,6 +315,7 @@ impl SessionHost for PhoneHost {
             hidden: false,
             clipboard_policy: Default::default(),
             notification_policy: Default::default(),
+            address_hints: Vec::new(),
         })
     }
     async fn on_established(&self, _peer: &Fingerprint, _handle: SessionHandle) {}
