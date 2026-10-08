@@ -128,6 +128,7 @@ unsafe mechanism.
 | Remote volume control: up, down, mute; absolute only where safe | [#30](https://github.com/yurisismotto/pliwee/issues/30) |
 | Remote power and session actions: lock, sleep, logout, shutdown, restart | [#31](https://github.com/yurisismotto/pliwee/issues/31) |
 | Scheduled remote actions and power timers | [#32](https://github.com/yurisismotto/pliwee/issues/32) |
+| Remote shutdown and scheduled shutdown: shutdown now, schedule, cancel, status — the shutdown slice of #31 and #32 | [#51](https://github.com/yurisismotto/pliwee/issues/51) |
 | Event and completion-triggered automations: known trigger → known action | [#33](https://github.com/yurisismotto/pliwee/issues/33) |
 
 "Remote Control & Automation" is one product module, but **not one
@@ -225,6 +226,8 @@ Remote control and automation (#28) ── mesh (#4), negotiation (#5),
  ├── Remote volume control (#30)
  ├── Power / session actions (#31)
  ├── Scheduled actions (#32)           ── power / session actions (#31)
+ ├── Remote shutdown / scheduled
+ │   shutdown (#51)                    ── shutdown slice of #31 + #32
  └── Event-triggered automations (#33) ── #31 + scheduled actions (#32)
 
 Android TV remote control (#11) ── TV navigation stays TV-specific;
