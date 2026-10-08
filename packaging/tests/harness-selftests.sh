@@ -395,6 +395,10 @@ if [ -n "$l4_ps" ] && [ -n "$l4_root" ]; then
 else
     notok "STATIC lifecycle-gates.sh no longer defines L4_PS / L4_ROOT_AWK; the checks below would test nothing"
 fi
+# Whatever login runs this file, the guest's may be longer than 8 characters.
+l4_width="$(sed -n 's/.*[ ,]user:\([0-9][0-9]*\)=.*/\1/p' <<<"$l4_ps")"
+[ "${l4_width:-0}" -ge 32 ] && ok "STATIC L4_PS gives the user column a width of $l4_width, so a login longer than 8 characters is not truncated (#97)" \
+                           || notok "STATIC L4_PS gives the user column no width of 32 or more: '$l4_ps'"
 mkdir -p "$WORK/l4"; cp "$(command -v sleep)" "$WORK/l4/pliweed"
 "$WORK/l4/pliweed" 60 & l4_pid=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x pliweed >/dev/null 2>&1 && break; sleep 0.2; done
@@ -404,6 +408,36 @@ if [ -n "$l4_ps" ] && pgrep -x pliweed >/dev/null 2>&1; then
         ok "REGRESSION: L4_PS captures a running pliweed as 'user pid args' ($(id -un) $l4_pid)"
     else
         notok "REGRESSION: L4_PS did not capture the running pliweed (pid $l4_pid): '$cap'"
+    fi
+    # L4 reads that capture twice: a line's first field is the daemon's user,
+    # and L4_ROOT_AWK counts the lines whose user is root. Both are run here on
+    # this process's line of the capture, so a column format they cannot parse
+    # goes red here and not in a guest.
+    own="$(awk -v p="$l4_pid" '$2 == p { print $1 }' <<<"$cap")"
+    [ "$own" = "$(id -un)" ] && ok "REGRESSION: L4 reads the daemon's user from the capture as $(id -un)" \
+                             || notok "REGRESSION: L4 reads the daemon's user from the capture as '$own', not $(id -un)"
+    [ "$(id -u)" -eq 0 ] && want_root=1 || want_root=0
+    line="$(awk -v p="$l4_pid" '$2 == p' <<<"$cap")"
+    if [ -z "$line" ]; then
+        notok "L4 root count: the capture has no line for pid $l4_pid; the count would read 0 over nothing"
+    elif [ -n "$l4_root" ] && [ "$(awk "$l4_root" <<<"$line")" = "$want_root" ]; then
+        ok "L4 root count: the captured pliweed (uid $(id -u)) counts $want_root"
+    else
+        notok "L4 root count: the captured pliweed (uid $(id -u)) does not count $want_root"
+    fi
+    # The false red of #97: procps truncates a width-less `user=` column longer
+    # than 8 characters to 7 and a `+`, so a runner logged in as pliwee-agent
+    # read back 'pliwee-+' and the line above failed over its own capture.
+    # Measured on that same process when this login is long enough to show it.
+    l4_user="$(id -un)"
+    # Not the last column: procps lets the last one run past its width.
+    trunc="$(ps -p "$l4_pid" -o user=,pid= 2>/dev/null | awk '{ print $1 }')"
+    if [ "${#l4_user}" -le 8 ]; then
+        printf 'n/a   login %s is 8 characters or fewer; the long-name capture is checked only statically here\n' "$l4_user"
+    elif [ "$trunc" = "$l4_user" ]; then
+        printf 'n/a   this ps prints the %d-character login %s whole without a width; the truncation cannot be shown here\n' "${#l4_user}" "$l4_user"
+    else
+        ok "MEASURED: a width-less user column reads the ${#l4_user}-character login $l4_user as '$trunc'; the capture above read it whole (#97)"
     fi
     # Scoped to the process this test started: a workstation that runs its own
     # OmniBridge 1.0.0 daemon made the host-wide match non-empty and this line
