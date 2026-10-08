@@ -67,8 +67,10 @@ data class AddressHint(
         }
 
         /** The hint for an address an authenticated session just used. */
-        fun from(address: InetSocketAddress, lastSuccessUnix: Long): AddressHint? =
-            of(address.hostString ?: return null, address.port, lastSuccessUnix)
+        fun from(address: InetSocketAddress, lastSuccessUnix: Long): AddressHint? {
+            val host = address.hostString ?: return null
+            return of(host, address.port, lastSuccessUnix)
+        }
 
         /**
          * A stored `host:port` — the format of the old `addresses` array —
