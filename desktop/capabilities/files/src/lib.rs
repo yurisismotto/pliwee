@@ -1046,27 +1046,9 @@ impl TransferManager {
             return;
         }
 
-        // Open the temp file *before* telling the peer we are ready, so a
-        // full or read-only disk is discovered now rather than after the
-        // sender has started streaming.
-        let destination = self.config.read().await.destination.clone();
-        let temp = match tokio::task::spawn_blocking(move || destination.open_temp(id)).await {
-            Ok(Ok((file, path))) => {
-                drop(file);
-                path
-            }
-            Ok(Err(e)) => {
-                tracing::warn!(transfer = %id, error = %e, "could not open a temp file");
-                self.fail(id, FailureReason::Storage).await;
-                return;
-            }
-            Err(_) => {
-                self.fail(id, FailureReason::Storage).await;
-                return;
-            }
-        };
-
         // The challenge, if this device is the one that accepts streams.
+        // Generated before the temp file exists, so that failing here leaves
+        // no file behind that nothing is holding a path to.
         let challenge = match self.role {
             StreamRole::Acceptor => match StreamChallenge::generate() {
                 Ok(c) => Some(c),
@@ -1082,26 +1064,63 @@ impl TransferManager {
             .map(StreamChallenge::expose_for_control_message)
             .unwrap_or_default();
 
-        {
+        // Open the temp file *before* telling the peer we are ready, so a
+        // full or read-only disk is discovered now rather than after the
+        // sender has started streaming.
+        //
+        // Checked, created and attached under the transfers lock: this is the
+        // stale-accept path. Asking a human takes human time, and the reaper
+        // may have ended this transfer while the prompt was on screen — the
+        // peer disconnected, the offer expired, the pairing was revoked. A
+        // late yes for an ended transfer creates nothing. And because the
+        // path is on the record before the lock drops, a terminal
+        // `transition` from here on removes the file in the same step that
+        // makes the state terminal, so `snapshot_one` never sees an ended
+        // transfer beside a `.part` file (#108). Opening first and attaching
+        // later left that window open. The price is one create under the map
+        // lock per accepted receive, the mirror of the unlink in `transition`.
+        let destination = self.config.read().await.destination.clone();
+        let opened = {
             let mut transfers = self.transfers.lock().await;
-            let Some(record) = transfers.get_mut(&id) else {
+            match transfers.get_mut(&id) {
+                Some(record) if record.state.can_transition_to(TransferState::Transferring) => {
+                    match tokio::task::spawn_blocking(move || destination.open_temp(id)).await {
+                        Ok(Ok((file, path))) => {
+                            drop(file);
+                            record.temp = Some(path);
+                            record.challenge = challenge;
+                            Some(Ok(()))
+                        }
+                        Ok(Err(e)) => Some(Err(Some(e))),
+                        Err(_) => Some(Err(None)),
+                    }
+                }
+                _ => None,
+            }
+        };
+        match opened {
+            Some(Ok(())) => {}
+            Some(Err(e)) => {
+                if let Some(e) = e {
+                    tracing::warn!(transfer = %id, error = %e, "could not open a temp file");
+                }
+                self.fail(id, FailureReason::Storage).await;
                 return;
-            };
-            record.temp = Some(temp);
-            record.challenge = challenge;
+            }
+            None => {
+                tracing::debug!(transfer = %id, "an accept arrived for a transfer that had already ended");
+                return;
+            }
         }
 
         // The acceptor moves into Transferring *before* the challenge goes
         // out, so that by the time a dialer can act on it the stream will be
         // accepted. See FileReady in files_v1.proto.
         //
-        // A refusal here is not a "should not happen": it is the stale-accept
-        // path. Asking a human takes human time, and the reaper may have
-        // ended this transfer while the prompt was on screen — the peer
-        // disconnected, the offer expired, the pairing was revoked. The state
-        // machine is what makes a late yes inert, and the temp file opened a
-        // few lines above has to go with it: `clean_up_temp` already ran, on
-        // a record that did not yet have a path to clean.
+        // A refusal here is still possible — the reaper can end the transfer
+        // between the lock above and this — but the temp file is already on
+        // the record, so that terminal `transition` removed it.
+        // `clean_up_temp` stays as the guarantee that nothing survives.
         if !self.transition(id, TransferState::Transferring, None).await {
             self.clean_up_temp(id).await;
             return;

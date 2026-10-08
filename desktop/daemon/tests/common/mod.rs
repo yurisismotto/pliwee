@@ -921,6 +921,13 @@ pub struct ApprovalSwitch {
     /// away, so the accept timeout can be exercised.
     stall: std::sync::atomic::AtomicBool,
     asked: std::sync::atomic::AtomicUsize,
+    /// When set, the approval waits for [`ApprovalSwitch::release`] and then
+    /// answers. Stands in for a human who answers *late*, after something
+    /// else has already ended the transfer.
+    hold: std::sync::atomic::AtomicBool,
+    released: tokio::sync::Notify,
+    holding: std::sync::atomic::AtomicUsize,
+    answered_after_hold: std::sync::atomic::AtomicUsize,
 }
 
 impl Default for ApprovalSwitch {
@@ -929,6 +936,10 @@ impl Default for ApprovalSwitch {
             accept: std::sync::atomic::AtomicBool::new(true),
             stall: std::sync::atomic::AtomicBool::new(false),
             asked: std::sync::atomic::AtomicUsize::new(0),
+            hold: std::sync::atomic::AtomicBool::new(false),
+            released: tokio::sync::Notify::new(),
+            holding: std::sync::atomic::AtomicUsize::new(0),
+            answered_after_hold: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 }
@@ -948,6 +959,27 @@ impl ApprovalSwitch {
     pub fn asked(&self) -> usize {
         self.asked.load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    pub fn set_hold(&self, hold: bool) {
+        self.hold.store(hold, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Lets one held question answer.
+    pub fn release(&self) {
+        self.released.notify_one();
+    }
+
+    /// How many questions are waiting on [`ApprovalSwitch::release`] now.
+    pub fn holding(&self) -> usize {
+        self.holding.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// How many held questions have since been answered: the evidence that
+    /// a late answer was actually handed back, not merely released.
+    pub fn answered_after_hold(&self) -> usize {
+        self.answered_after_hold
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 #[async_trait::async_trait]
@@ -957,6 +989,15 @@ impl TransferApproval for ApprovalSwitch {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.stall.load(std::sync::atomic::Ordering::Relaxed) {
             std::future::pending::<()>().await;
+        }
+        if self.hold.load(std::sync::atomic::Ordering::Relaxed) {
+            self.holding
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.released.notified().await;
+            self.holding
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            self.answered_after_hold
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         self.accept.load(std::sync::atomic::Ordering::Relaxed)
     }

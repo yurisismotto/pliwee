@@ -1853,6 +1853,156 @@ async fn f14_a_failed_transfer_is_never_visible_with_its_partial_file() {
     }
 }
 
+/// A destination that stops after creating a temp file, so a test can look
+/// at the world while the `.part` exists and before the capability moves on.
+#[derive(Debug)]
+struct PausingSink {
+    inner: pliwee_capability_files::Destination,
+    opened: tokio::sync::mpsc::UnboundedSender<std::path::PathBuf>,
+    proceed: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl pliwee_capability_files::FileSink for PausingSink {
+    fn directory(&self) -> &std::path::Path {
+        self.inner.dir()
+    }
+
+    fn prepare(&self) -> std::io::Result<()> {
+        self.inner.prepare()
+    }
+
+    fn open_temp(&self, id: TransferId) -> std::io::Result<(std::fs::File, std::path::PathBuf)> {
+        let (file, path) = self.inner.open_temp(id)?;
+        let _ = self.opened.send(path.clone());
+        // Bounded, so a capability that calls this somewhere the test is not
+        // looking cannot hang the suite. A dropped sender ends it at once.
+        let _ = self
+            .proceed
+            .lock()
+            .expect("proceed lock")
+            .recv_timeout(GRACE);
+        Ok((file, path))
+    }
+
+    fn reserve(&self, name: &str) -> std::io::Result<std::path::PathBuf> {
+        self.inner.reserve(name)
+    }
+
+    fn promote(&self, temp: &std::path::Path, name: &str) -> std::io::Result<std::path::PathBuf> {
+        self.inner.promote(temp, name)
+    }
+}
+
+/// The stale-accept path (#108): the human says yes after the reaper has
+/// already ended the offer.
+///
+/// The late yes must not put a `.part` file on disk next to a transfer that
+/// `snapshot_one` already reports as ended. It used to: the temp file was
+/// opened outside the transfers lock, attached to the terminal record, and
+/// only removed once `transition(Transferring)` had refused — a window in
+/// which unverified peer data sat beside `failed`.
+///
+/// The destination pauses inside `open_temp`, after the file exists, so that
+/// window is held open rather than raced for.
+#[tokio::test]
+async fn f14_a_late_accept_never_leaves_a_partial_file_beside_an_ended_transfer() {
+    let server = TestServer::start().await;
+    let (phone, _captured) = TestClient::new_raw("phone");
+    let session = paired(&server, &phone).await;
+
+    let (opened_tx, mut opened_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (proceed_tx, proceed_rx) = std::sync::mpsc::channel();
+    let mut config = server.transfers.config().await;
+    config.destination = pliwee_capability_files::Destination::from_sink(Arc::new(PausingSink {
+        inner: config.destination.clone(),
+        opened: opened_tx,
+        proceed: std::sync::Mutex::new(proceed_rx),
+    }));
+    server.transfers.set_config(config).await;
+    server.approvals.set_hold(true);
+
+    let id = TransferId::from_bytes(&[0xf3; 16]).expect("id");
+    let payload = b"late".to_vec();
+    send_files_control(
+        &session,
+        pb::file_control::Body::Offer(pb::FileOffer {
+            transfer_id: id.to_vec(),
+            filename: "late.txt".into(),
+            size_bytes: payload.len() as u64,
+            mime_type: String::new(),
+            sha256: sha256_of(&payload).to_vec(),
+            timestamp_unix_ms: 0,
+        }),
+    )
+    .await;
+
+    // The question is on screen.
+    let deadline = tokio::time::Instant::now() + GRACE;
+    while server.approvals.holding() != 1 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the offer never reached the approval (asked {} times)",
+            server.approvals.asked()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    // The phone goes away, and the reaper ends the offer under the prompt.
+    session.close().await;
+    let ended = wait_for_terminal(&server.transfers, id, GRACE).await;
+    assert_eq!(ended.state, TransferState::Failed);
+    assert_eq!(ended.failure, Some(FailureReason::Transport));
+    assert!(server.partial_files().is_empty());
+
+    // The human says yes, late.
+    server.approvals.release();
+    let deadline = tokio::time::Instant::now() + GRACE;
+    while server.approvals.answered_after_hold() != 1 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the held approval never answered"
+        );
+        tokio::task::yield_now().await;
+    }
+
+    // Watch for long enough that a late `open_temp` would have run: from the
+    // answer it is microseconds away. Every look must find either a live
+    // transfer or no partial file.
+    let watch_until = tokio::time::Instant::now() + Duration::from_secs(2);
+    let mut opened = Vec::new();
+    while tokio::time::Instant::now() < watch_until {
+        if let Ok(path) = opened_rx.try_recv() {
+            let now = server.transfers.snapshot_one(id).await.expect("record");
+            assert!(
+                !(now.state.is_terminal() && path.exists()),
+                "a late accept put a partial file on disk beside `{}`: {:?}",
+                now.state,
+                server.partial_files()
+            );
+            opened.push(path);
+            let _ = proceed_tx.send(());
+        }
+        let now = server.transfers.snapshot_one(id).await.expect("record");
+        assert!(
+            !(now.state.is_terminal() && !server.partial_files().is_empty()),
+            "`{}` was observable with a partial file on disk: {:?}",
+            now.state,
+            server.partial_files()
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    let after = server.transfers.snapshot_one(id).await.expect("record");
+    assert_eq!(after.state, TransferState::Failed, "a late yes revived it");
+    assert_eq!(after.failure, Some(FailureReason::Transport));
+    assert!(
+        opened.is_empty(),
+        "a late accept opened a temp file for an ended transfer"
+    );
+    assert!(server.partial_files().is_empty());
+    assert!(server.completed_files().is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // F15 — revocation during a transfer
 // ---------------------------------------------------------------------------
