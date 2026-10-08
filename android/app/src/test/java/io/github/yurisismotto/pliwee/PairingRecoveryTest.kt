@@ -15,6 +15,7 @@ import io.github.yurisismotto.pliwee.notifications.NotificationPolicy
 import io.github.yurisismotto.pliwee.pairing.PairingGate
 import io.github.yurisismotto.pliwee.pairing.PairingProof
 import io.github.yurisismotto.pliwee.pairing.QrPayload
+import io.github.yurisismotto.pliwee.store.AddressHint
 import io.github.yurisismotto.pliwee.store.PeerTarget
 import io.github.yurisismotto.pliwee.store.TrustStore
 import io.github.yurisismotto.pliwee.ui.UiMapping
@@ -101,13 +102,13 @@ class PairingRecoveryTest {
         fingerprint = f,
         pairedAtUnix = pairedAt,
         grantedCapabilities = grants,
-        addresses = addresses,
+        addressHints = addresses.mapNotNull(AddressHint::parseLegacy),
         clipboardPolicy = clipboard,
         notificationPolicy = notifications,
     )
 
     private fun merge(existing: TrustStore.TrustedPeer?, paired: TrustStore.TrustedPeer) =
-        TrustStore.TrustedPeer.mergePairing(existing, paired, maxAddresses = 4)
+        TrustStore.TrustedPeer.mergePairing(existing, paired)
 
     /** What `PliweeApp.pair` builds from a session that has just come up. */
     private fun freshlyPaired(
@@ -340,21 +341,48 @@ class PairingRecoveryTest {
         assertEquals(
             "the address that answered first, then what was already known",
             listOf("192.168.68.72:55432", "192.168.68.99:55432"),
-            after.addresses,
+            after.addressHints.map { it.format() },
         )
     }
 
+    /** Mesh V2 SPEC §5: at most eight hints per peer, the oldest dropped. */
     @Test
     fun `remembered addresses stay bounded`() {
         val before = peer(
             fedora,
             "Fedora",
             setOf(FilesCapability.ID),
-            addresses = listOf("a:1", "b:2", "c:3", "d:4"),
+            addresses = listOf("a:1", "b:2", "c:3", "d:4", "e:5", "f:6", "g:7", "h:8"),
         )
-        val after = merge(before, freshlyPaired(address = "e:5"))
-        assertEquals(4, after.addresses.size)
-        assertEquals("e:5", after.addresses.first())
+        val after = merge(before, freshlyPaired(address = "i:9"))
+        assertEquals(8, after.addressHints.size)
+        assertEquals(
+            "the pairing's address first, the least recent one gone",
+            listOf("i:9", "a:1", "b:2", "c:3", "d:4", "e:5", "f:6", "g:7"),
+            after.addressHints.map { it.format() },
+        )
+    }
+
+    @Test
+    fun `a re-pair at a remembered address refreshes it rather than adding a second`() {
+        val before = peer(
+            fedora,
+            "Fedora",
+            setOf(FilesCapability.ID),
+            addresses = listOf("192.168.68.99:55432", "192.168.68.72:55432"),
+        )
+        // What `pair` builds: the hint carries the pairing time.
+        val paired = freshlyPaired().copy(
+            addressHints = listOf(AddressHint("192.168.68.72", 55432, 1_800_000_000L)),
+        )
+        val after = merge(before, paired)
+        assertEquals(
+            listOf(
+                AddressHint("192.168.68.72", 55432, 1_800_000_000L),
+                AddressHint("192.168.68.99", 55432, 0),
+            ),
+            after.addressHints,
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -562,7 +590,7 @@ class PairingRecoveryTest {
         assertFalse(after.allows(NotificationsCapability.ID))
         assertEquals(ClipboardPolicy(), after.clipboardPolicy)
         assertEquals(NotificationPolicy(), after.notificationPolicy)
-        assertEquals(fresh.addresses, after.addresses)
+        assertEquals(fresh.addressHints, after.addressHints)
         assertEquals(fresh.pairedAtUnix, after.pairedAtUnix)
     }
 
@@ -593,7 +621,7 @@ class PairingRecoveryTest {
                 put("fingerprint", p.fingerprint.toHex())
                 put("pairedAt", p.pairedAtUnix)
                 put("grants", org.json.JSONArray(p.grantedCapabilities.sorted()))
-                put("addresses", org.json.JSONArray(p.addresses))
+                put("addressHints", org.json.JSONArray(p.addressHints.map { it.toJson() }))
                 put("clipboardPolicy", p.clipboardPolicy.toJson())
                 put("notificationPolicy", p.notificationPolicy.toJson())
             }.toString()
@@ -672,7 +700,7 @@ class PairingRecoveryTest {
         val mutators = listOf(
             "addPeer(", "upsertPairedPeer(", "removePeer(", "setGrant(",
             "setClipboardPolicy(", "setNotificationPolicy(", "selectPeer(",
-            "clearSelectedPeer(", "rememberAddresses(",
+            "clearSelectedPeer(", "rememberAddresses(", "recordSuccessfulAddress(",
         )
         val calls = mutators.filter { body.contains("trustStore.$it") }
         assertEquals(

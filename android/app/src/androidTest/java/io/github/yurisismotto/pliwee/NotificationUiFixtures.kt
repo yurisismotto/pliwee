@@ -36,7 +36,7 @@ object NotificationUiFixtures {
         fingerprint = fingerprint(),
         pairedAtUnix = 1_700_000_000,
         grantedCapabilities = if (granted) otherGrants + "notifications.v1" else otherGrants,
-        addresses = emptyList(),
+        addressHints = emptyList(),
         notificationPolicy = policy,
     )
 

@@ -34,7 +34,7 @@ class UiMappingTest {
         fingerprint = Fingerprint.fromHex("00".repeat(32))!!,
         pairedAtUnix = 0,
         grantedCapabilities = capabilities.toSet(),
-        addresses = emptyList(),
+        addressHints = emptyList(),
         clipboardPolicy = policy,
     )
 

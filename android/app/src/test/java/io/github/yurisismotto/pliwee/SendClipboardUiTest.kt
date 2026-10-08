@@ -40,7 +40,7 @@ class SendClipboardUiTest {
         fingerprint = Fingerprint.fromHex("ab".repeat(32))!!,
         pairedAtUnix = 0,
         grantedCapabilities = if (granted) setOf(ClipboardCapability.ID) else emptySet(),
-        addresses = emptyList(),
+        addressHints = emptyList(),
         clipboardPolicy = policy,
     )
 

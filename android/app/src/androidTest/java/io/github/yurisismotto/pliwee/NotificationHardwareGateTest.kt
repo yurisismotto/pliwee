@@ -118,7 +118,7 @@ class NotificationHardwareGateTest {
                 fingerprint = testPeer,
                 pairedAtUnix = 0,
                 grantedCapabilities = setOf(TrustStore.NOTIFICATIONS_CAPABILITY_ID),
-                addresses = emptyList(),
+                addressHints = emptyList(),
                 notificationPolicy = NotificationPolicy(allowedApps = setOf(fixturePackage)),
             ),
         )

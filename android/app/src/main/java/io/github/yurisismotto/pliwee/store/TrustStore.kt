@@ -7,6 +7,7 @@ import io.github.yurisismotto.pliwee.identity.Fingerprint
 import io.github.yurisismotto.pliwee.notifications.NotificationPolicy
 import io.github.yurisismotto.pliwee.notifications.NotificationSecret
 import java.io.File
+import java.net.InetSocketAddress
 import java.security.SecureRandom
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -113,7 +114,14 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
         val fingerprint: Fingerprint,
         val pairedAtUnix: Long,
         val grantedCapabilities: Set<String>,
-        val addresses: List<String>,
+        /**
+         * Where an authenticated session with this computer last came up,
+         * most recent first, at most [AddressHint.MAX_PER_PEER].
+         *
+         * Routing hints, never identity: the pinned [fingerprint] decides who
+         * answered whichever hint is dialled. See [AddressHint].
+         */
+        val addressHints: List<AddressHint>,
         /**
          * Whether the person withdrew trust from this computer.
          *
@@ -171,6 +179,24 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
         fun isListed(): Boolean = !hidden
 
         /**
+         * The remembered hints as dialable addresses, most recent first.
+         *
+         * Empty for a revoked record whatever it holds: a revoked computer is
+         * not a destination, and a hint left on one must not make it one.
+         */
+        fun dialAddresses(): List<InetSocketAddress> =
+            if (revoked) emptyList() else addressHints.map { it.toSocketAddress() }
+
+        /**
+         * The record after an authenticated session came up at [success].
+         *
+         * Unchanged for a revoked record: nothing is remembered about where
+         * to dial a computer this phone has decided not to dial.
+         */
+        fun withSuccessfulAddress(success: AddressHint): TrustedPeer =
+            if (revoked) this else copy(addressHints = AddressHint.recordSuccess(addressHints, success))
+
+        /**
          * The record with trust withdrawn.
          *
          * The grants and both policies go with it. They are inert while the
@@ -194,7 +220,7 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
             revoked = true,
             hidden = false,
             grantedCapabilities = emptySet(),
-            addresses = emptyList(),
+            addressHints = emptyList(),
             clipboardPolicy = ClipboardPolicy.DENIED,
             notificationPolicy = NotificationPolicy.DENIED,
         )
@@ -216,7 +242,7 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
             fingerprint = fingerprint,
             pairedAtUnix = 0,
             grantedCapabilities = emptySet(),
-            addresses = emptyList(),
+            addressHints = emptyList(),
             revoked = true,
             hidden = true,
             clipboardPolicy = ClipboardPolicy.DENIED,
@@ -237,7 +263,16 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
             put(KEY_FINGERPRINT, fingerprint.toHex())
             put(KEY_PAIRED_AT, pairedAtUnix)
             put(KEY_GRANTS, JSONArray(grantedCapabilities.toList()))
-            put(KEY_ADDRESSES, JSONArray(addresses))
+            // The old `host:port` strings, still written, so an older build
+            // reading this file dials the same places it always did. They are
+            // derived from the hints and never read while the hints are there.
+            put(KEY_ADDRESSES, JSONArray(addressHints.map { it.format() }))
+            // Written only when there are any, for the reason the flags
+            // below are: a record with nothing to remember is what an older
+            // build wrote.
+            if (addressHints.isNotEmpty()) {
+                put(KEY_ADDRESS_HINTS, JSONArray(addressHints.map { it.toJson() }))
+            }
             // Written only when true, so a file full of ordinary trusted
             // computers is byte-for-byte what an older build wrote and an
             // older build can still read it.
@@ -270,6 +305,12 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
                 val fingerprint = Fingerprint.fromHex(entry.optString(KEY_FINGERPRINT))
                     ?: return null
                 val hidden = entry.optBoolean(KEY_HIDDEN, false)
+                // Hidden implies revoked, decided here rather than believed
+                // from the file. A record that claims to be off the list and
+                // still trusted is either hand-edited or damaged, and
+                // believing it would mean a computer nobody can see keeping
+                // its grants.
+                val revoked = hidden || entry.optBoolean(KEY_REVOKED, false)
                 return TrustedPeer(
                     deviceId = entry.optString(KEY_DEVICE_ID),
                     deviceName = entry.optString(KEY_DEVICE_NAME),
@@ -279,15 +320,11 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
                         ?.let { grants -> (0 until grants.length()).map { grants.getString(it) } }
                         ?.toSet()
                         ?: emptySet(),
-                    addresses = entry.optJSONArray(KEY_ADDRESSES)
-                        ?.let { list -> (0 until list.length()).map { list.getString(it) } }
-                        ?: emptyList(),
-                    // Hidden implies revoked, decided here rather than
-                    // believed from the file. A record that claims to be off
-                    // the list and still trusted is either hand-edited or
-                    // damaged, and believing it would mean a computer nobody
-                    // can see keeping its grants.
-                    revoked = hidden || entry.optBoolean(KEY_REVOKED, false),
+                    // A revoked record keeps no usable hint, whatever the file
+                    // says: revoking clears them, and one that survived on
+                    // disk is a destination this phone decided not to dial.
+                    addressHints = if (revoked) emptyList() else addressHintsOf(entry),
+                    revoked = revoked,
                     hidden = hidden,
                     // A record written before this capability existed has no
                     // policy object; `fromJson` supplies the documented
@@ -300,6 +337,38 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
                         entry.optJSONObject(KEY_NOTIFICATION_POLICY),
                     ),
                 )
+            }
+
+            /**
+             * A record's address hints — the migration from `addresses`.
+             *
+             * `addressHints` when the record has them. Otherwise the old
+             * `addresses` strings, which are what every build before this
+             * one wrote: each becomes a hint, in the order stored — most
+             * recent first, as the old merge kept it — with its last success
+             * unknown. Either way the result is normalized, de-duplicated
+             * and bounded, so an over-long or hand-edited list is reduced the
+             * same way every time. An entry that cannot name an endpoint is
+             * dropped: hints are non-authoritative, and losing one costs a
+             * discovery round, never a pairing.
+             *
+             * Nothing else in the record depends on this. The fingerprint,
+             * the device id, the grants and the policies are read exactly as
+             * before, whatever the hints turn out to be.
+             */
+            fun addressHintsOf(entry: JSONObject): List<AddressHint> {
+                val structured = entry.optJSONArray(KEY_ADDRESS_HINTS)
+                val hints = if (structured != null) {
+                    (0 until structured.length()).mapNotNull { index ->
+                        structured.optJSONObject(index)?.let(AddressHint::fromJson)
+                    }
+                } else {
+                    val legacy = entry.optJSONArray(KEY_ADDRESSES) ?: return emptyList()
+                    (0 until legacy.length()).mapNotNull { index ->
+                        AddressHint.parseLegacy(legacy.optString(index))
+                    }
+                }
+                return AddressHint.bounded(hints)
             }
 
             /**
@@ -323,7 +392,6 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
             fun mergePairing(
                 existing: TrustedPeer?,
                 paired: TrustedPeer,
-                maxAddresses: Int,
             ): TrustedPeer {
                 // The non-escalation boundary, applied once and used by both
                 // branches: a pairing may never be the thing that grants a
@@ -365,6 +433,7 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
                 ) {
                     return paired.copy(
                         grantedCapabilities = grantable,
+                        addressHints = AddressHint.bounded(paired.addressHints),
                         // A pairing that succeeded is a visible, trusted row,
                         // whatever was in its place a moment ago.
                         revoked = false,
@@ -380,10 +449,12 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
                     deviceName = paired.deviceName,
                     pairedAtUnix = paired.pairedAtUnix,
                     // The address that answered first, then what was already
-                    // remembered. Never fewer places to look than before.
-                    addresses = (paired.addresses + existing.addresses)
-                        .distinct()
-                        .take(maxAddresses),
+                    // remembered. Never fewer places to look than before, up
+                    // to the bound; the same endpoint twice is one hint, with
+                    // the pairing's fresher time.
+                    addressHints = AddressHint.bounded(
+                        paired.addressHints + existing.addressHints,
+                    ),
                     // Decisions the person made about this fingerprint.
                     //
                     // Unioned, so an auto-grantable capability this pairing
@@ -480,7 +551,6 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
         val merged = TrustedPeer.mergePairing(
             existing = peer(peer.fingerprint),
             paired = peer,
-            maxAddresses = MAX_REMEMBERED_ADDRESSES,
         )
         addPeer(merged)
         return merged
@@ -653,10 +723,20 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
             persist()
         }
 
-    /** Remembers where a peer was last reachable, to skip discovery next time. */
-    fun rememberAddresses(fingerprint: Fingerprint, addresses: List<String>) {
+    /**
+     * Remembers where a peer was last reachable, to skip discovery next time.
+     *
+     * Call only once a session with the pinned [fingerprint] is established:
+     * that is what makes [address] a *successful* hint rather than merely an
+     * advertised one. The hint moves to the front with the current time, an
+     * equivalent older one collapses into it, and the list stays bounded.
+     *
+     * Does nothing for a computer that is not trusted, revoked included.
+     */
+    fun recordSuccessfulAddress(fingerprint: Fingerprint, address: InetSocketAddress) {
         val peer = peer(fingerprint) ?: return
-        addPeer(peer.copy(addresses = addresses.distinct().take(MAX_REMEMBERED_ADDRESSES)))
+        val hint = AddressHint.from(address, System.currentTimeMillis() / 1000) ?: return
+        addPeer(peer.withSuccessfulAddress(hint))
     }
 
     private fun writePeers(peers: List<TrustedPeer>) {
@@ -705,7 +785,6 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
     companion object {
         private const val FILE_NAME = "trust-store.json"
         const val SCHEMA_VERSION = 1
-        private const val MAX_REMEMBERED_ADDRESSES = 4
 
         private const val KEY_SCHEMA = "schemaVersion"
         private const val KEY_DEVICE_ID = "deviceId"
@@ -715,6 +794,19 @@ class TrustStore(context: Context) : NotificationSecret.Metadata {
         private const val KEY_PAIRED_AT = "pairedAtUnix"
         private const val KEY_GRANTS = "grantedCapabilities"
         private const val KEY_ADDRESSES = "addresses"
+
+        /**
+         * Structured address hints (Mesh V2 SPEC §§5, 11).
+         *
+         * Additive and optional, so [SCHEMA_VERSION] stays at 1 for the
+         * reason [KEY_SELECTED_PEER] did. A record without it is read from
+         * [KEY_ADDRESSES], which is the migration; a record with it is read
+         * from it alone. [KEY_ADDRESSES] is still written beside it, derived
+         * from the hints, so an older build reading the file dials the same
+         * places — and, rewriting the record, simply drops the hints, which
+         * the next upgrade migrates again from the strings it left.
+         */
+        private const val KEY_ADDRESS_HINTS = "addressHints"
 
         /**
          * Trust withdrawn, and taken off the list.

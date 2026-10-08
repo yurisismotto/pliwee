@@ -43,7 +43,7 @@ class ExchangeFlowTest {
         fingerprint = Fingerprint.fromHex(hex)!!,
         pairedAtUnix = 0,
         grantedCapabilities = setOf(ClipboardCapability.ID),
-        addresses = emptyList(),
+        addressHints = emptyList(),
         clipboardPolicy = ClipboardPolicy(),
     )
 
