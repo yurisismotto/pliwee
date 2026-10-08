@@ -166,3 +166,27 @@ message Error {
   // If the error is fatal the sender closes the connection after sending.
   bool fatal = 3;
 }
+
+// ---------------------------------------------------------------------------
+// Session lifecycle (protocol version 2)
+// ---------------------------------------------------------------------------
+
+// Why a session is being closed on purpose. See
+// docs/architecture/MULTI-DEVICE-MESH-V2.md §2.
+enum SessionCloseReason {
+  SESSION_CLOSE_REASON_UNSPECIFIED = 0;
+  // A duplicate control session to the same peer won; this one lost
+  // (ADR-0022 §D4). Diagnostic only: never an authorization input.
+  SESSION_CLOSE_REASON_SUPERSEDED = 1;
+}
+
+// May be sent immediately before intentionally closing a superseded duplicate
+// control session, so the other side can tell "superseded" from "network
+// failure".
+//
+// VERSION 2 ONLY. A peer that negotiated protocol version 1 never receives
+// this message; it is closed without a reason, because a V1 peer closes a
+// session on any body it does not know (ADR-0010).
+message SessionClose {
+  SessionCloseReason reason = 1;
+}

@@ -3,8 +3,9 @@
 //! # What is stored
 //!
 //! Only what the spec allows: identity, paired devices, their pinned public
-//! keys, capability permissions, settings. No clipboard content, no transfer
-//! history, no message log.
+//! keys, capability permissions, settings, and up to [`MAX_ADDRESS_HINTS`]
+//! recently successful addresses per trusted peer (Mesh V2 SPEC §5). No
+//! clipboard content, no transfer history, no message log.
 //!
 //! # Format
 //!
@@ -26,6 +27,7 @@
 //! See ADR-0006 for the full trade-off and the TPM2 follow-up.
 
 use std::collections::BTreeMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -125,6 +127,130 @@ pub struct TrustedPeer {
     /// rather than failing, or silently reading `false` across the board.
     #[serde(default)]
     pub notification_policy: NotificationPolicy,
+
+    /// Addresses this peer was recently reached at, most recent first.
+    ///
+    /// Routing hints, never identity (Mesh V2 SPEC §5). Nothing that decides
+    /// admission, authorization or a grant reads this field: the fingerprint
+    /// above is the identity, and a dial to any of these addresses still has
+    /// to present that pin. A hint that points at the wrong machine therefore
+    /// costs a failed handshake and nothing else.
+    ///
+    /// At most [`MAX_ADDRESS_HINTS`], written only through
+    /// [`Store::record_address_success`]. Empty on a revoked record: a device
+    /// that is no longer trusted has nowhere this one should go looking for it.
+    ///
+    /// `#[serde(default)]` because every store written before Mesh V2 has no
+    /// such key (SPEC §11: additive, default empty), and read leniently
+    /// because hints may be discarded safely — a malformed entry is dropped
+    /// rather than allowed to make the trust store unreadable.
+    #[serde(default, deserialize_with = "lenient_address_hints")]
+    pub address_hints: Vec<AddressHint>,
+}
+
+/// The most address hints kept for one peer (Mesh V2 SPEC §5).
+pub const MAX_ADDRESS_HINTS: usize = 8;
+
+/// One address a trusted peer was successfully reached at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddressHint {
+    /// Normalized: an IPv4-mapped IPv6 address is stored as the IPv4 address
+    /// it maps, so the same machine reached both ways is one hint.
+    pub address: IpAddr,
+    pub port: u16,
+    /// When the last successful connection to this address happened.
+    ///
+    /// Informational, for display. Eviction order is the order of the list,
+    /// not this value, so a wall clock that steps backwards cannot evict the
+    /// address that has just worked.
+    pub last_success_unix: i64,
+}
+
+impl AddressHint {
+    /// Builds a hint, or `None` for an address nothing could dial.
+    ///
+    /// IPv6 link-local addresses are refused: without the scope id they
+    /// cannot be dialled, and the scope id is an interface index local to
+    /// this boot, not a property of the peer.
+    pub fn new(addr: SocketAddr, last_success_unix: i64) -> Option<Self> {
+        let address = addr.ip().to_canonical();
+        let unusable = addr.port() == 0
+            || address.is_unspecified()
+            || address.is_multicast()
+            || address == IpAddr::V4(Ipv4Addr::BROADCAST)
+            || matches!(address, IpAddr::V6(v6) if v6.is_unicast_link_local());
+        if unusable {
+            return None;
+        }
+        Some(Self {
+            address,
+            port: addr.port(),
+            last_success_unix,
+        })
+    }
+
+    /// The address to dial. Still subject to the SPKI pin.
+    pub fn socket_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.address, self.port)
+    }
+
+    /// Two hints are the same route when they name the same address and port.
+    fn same_route(&self, other: &Self) -> bool {
+        self.address == other.address && self.port == other.port
+    }
+}
+
+/// Puts a hint list into the shape the store promises: normalized, usable,
+/// de-duplicated keeping the first (most recent) occurrence, and bounded.
+fn bound_address_hints(hints: Vec<AddressHint>) -> Vec<AddressHint> {
+    let mut kept: Vec<AddressHint> = Vec::with_capacity(MAX_ADDRESS_HINTS);
+    for hint in hints {
+        let Some(hint) = AddressHint::new(hint.socket_addr(), hint.last_success_unix) else {
+            continue;
+        };
+        if kept.iter().any(|k| k.same_route(&hint)) {
+            continue;
+        }
+        kept.push(hint);
+        if kept.len() == MAX_ADDRESS_HINTS {
+            break;
+        }
+    }
+    kept
+}
+
+/// Reads `address_hints` without ever failing the load.
+///
+/// A hint is disposable and a trust store is not: an entry that does not
+/// parse is skipped, and a value that is not a list at all reads as no hints.
+fn lenient_address_hints<'de, D>(deserializer: D) -> std::result::Result<Vec<AddressHint>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Entry {
+        Hint(AddressHint),
+        Other(serde::de::IgnoredAny),
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Field {
+        List(Vec<Entry>),
+        Other(serde::de::IgnoredAny),
+    }
+
+    Ok(match Field::deserialize(deserializer)? {
+        Field::List(entries) => entries
+            .into_iter()
+            .filter_map(|e| match e {
+                Entry::Hint(h) => Some(h),
+                Entry::Other(_) => None,
+            })
+            .collect(),
+        Field::Other(_) => Vec::new(),
+    })
 }
 
 impl TrustedPeer {
@@ -178,6 +304,8 @@ impl TrustedPeer {
             // nothing and means the file says what is the case.
             clipboard_policy: ClipboardPolicy::DENIED,
             notification_policy: NotificationPolicy::DENIED,
+            // Where a device used to be is history too.
+            address_hints: Vec::new(),
         }
     }
 }
@@ -454,6 +582,13 @@ impl Store {
                 if p.hidden {
                     p.revoked = true;
                 }
+                // Hints are believed only in the shape the store writes
+                // them, and only for a peer that is still trusted.
+                p.address_hints = if p.revoked {
+                    Vec::new()
+                } else {
+                    bound_address_hints(std::mem::take(&mut p.address_hints))
+                };
                 (p.fingerprint, p)
             })
             .collect();
@@ -557,9 +692,68 @@ impl Store {
 
     /// Adds or refreshes a trusted peer. Re-pairing an existing fingerprint
     /// clears a previous revocation, which is the intended way back in.
-    pub fn add_peer(&mut self, peer: TrustedPeer) -> Result<()> {
+    pub fn add_peer(&mut self, mut peer: TrustedPeer) -> Result<()> {
+        peer.address_hints = if peer.revoked {
+            Vec::new()
+        } else {
+            bound_address_hints(peer.address_hints)
+        };
         self.peers.insert(peer.fingerprint, peer);
         self.persist()
+    }
+
+    /// Records that `addr` reached the trusted peer pinned as `fp`.
+    ///
+    /// Call this only after a session to `addr` authenticated against `fp`:
+    /// an address learned from discovery, or one whose handshake failed, is
+    /// not a success and is not recorded (Mesh V2 SPEC §5).
+    ///
+    /// `addr` must be an address this device could dial. For a session the
+    /// peer opened, that is the source IP with the peer's listening port —
+    /// never the connection's ephemeral source port (ADR-0022 §D3), which
+    /// would fill the list with routes that lead nowhere.
+    ///
+    /// The address moves to the front of the list with `at_unix` as its
+    /// last-success time; an equivalent hint already stored is replaced
+    /// rather than duplicated, and the oldest hint past
+    /// [`MAX_ADDRESS_HINTS`] is dropped.
+    ///
+    /// Returns `false`, and writes nothing, for a fingerprint that is not a
+    /// trusted peer — unknown and revoked alike — and for an address nothing
+    /// could dial. A hint never creates, restores or changes a trust record.
+    pub fn record_address_success(
+        &mut self,
+        fp: &Fingerprint,
+        addr: SocketAddr,
+        at_unix: i64,
+    ) -> Result<bool> {
+        if self.trusted_peer(fp).is_none() {
+            return Ok(false);
+        }
+        let Some(hint) = AddressHint::new(addr, at_unix) else {
+            return Ok(false);
+        };
+
+        let mut next = self.peers.clone();
+        if let Some(p) = next.get_mut(fp) {
+            let mut hints = Vec::with_capacity(MAX_ADDRESS_HINTS + 1);
+            hints.push(hint);
+            hints.append(&mut p.address_hints);
+            p.address_hints = bound_address_hints(hints);
+        }
+        self.commit(next)?;
+        Ok(true)
+    }
+
+    /// Where the trusted peer pinned as `fp` was recently reached, most
+    /// recent first.
+    ///
+    /// Empty for an unknown or revoked fingerprint. Whatever is dialled from
+    /// this list must still present `fp`; the list itself proves nothing.
+    pub fn address_hints(&self, fp: &Fingerprint) -> &[AddressHint] {
+        self.trusted_peer(fp)
+            .map(|p| p.address_hints.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Revokes a pairing. The record is kept (with `revoked = true`) rather
@@ -582,6 +776,9 @@ impl Store {
                 // and serializes as `allow_send`/`allow_mirror` true.
                 p.clipboard_policy = ClipboardPolicy::DENIED;
                 p.notification_policy = NotificationPolicy::DENIED;
+                // And nothing should go looking for a device that is no
+                // longer trusted.
+                p.address_hints.clear();
                 self.persist()?;
                 Ok(true)
             }

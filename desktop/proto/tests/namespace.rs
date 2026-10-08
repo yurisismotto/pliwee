@@ -185,20 +185,29 @@ fn field_table() -> String {
 }
 
 /// Taken from the descriptors **before** the rename (at `23a4503`, package
-/// `omnibridge.v1`) and never regenerated since: the rename is wire-neutral
+/// `omnibridge.v1`) and never regenerated since, only appended to by the
+/// intentional changes listed below: the rename is wire-neutral
 /// only if every field number, type, label, oneof and enum value is what it
 /// was. A schema change that is meant to happen updates this file in its own
 /// commit, not in a rename.
+///
+/// Intentional changes since the snapshot, each additive:
+///
+/// * GitHub #90 — `SessionCloseReason`, `SessionClose` and
+///   `Envelope.session_close = 25` (protocol version 2 scaffolding,
+///   MULTI-DEVICE-MESH-V2.md §2). Every line that was here before stands
+///   unchanged.
 const PRE_RENAME_FIELD_TABLE: &str = include_str!("descriptor-field-table.txt");
 
 #[test]
 fn the_field_table_is_identical_to_the_pre_rename_snapshot() {
     let table = field_table();
-    // Non-vacuous: 6 files and 117 fields were measured before the rename.
+    // Non-vacuous: 6 files and 117 fields were measured before the rename;
+    // #90 added two (`SessionClose.reason`, `Envelope.session_close`).
     assert_eq!(table.lines().filter(|l| l.starts_with("file ")).count(), 6);
     assert_eq!(
         table.lines().filter(|l| l.starts_with("  field ")).count(),
-        117
+        119
     );
     for (i, (now, then)) in table
         .lines()
