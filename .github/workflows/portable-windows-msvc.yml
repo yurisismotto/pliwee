@@ -204,6 +204,7 @@ jobs:
             'portable_boundary.rs',
             'protocol.rs',
             'revoked_tombstone.rs',
+            'text_code.rs',
             'wire_identity.rs'
           ) | Sort-Object
           $actual = Get-ChildItem core/tests -Filter *.rs -File |
@@ -272,6 +273,7 @@ jobs:
             --test pairing `
             --test portable_boundary `
             --test protocol `
+            --test text_code `
             --test wire_identity
 
       # ---------------------------------------------------------------- 5 --
