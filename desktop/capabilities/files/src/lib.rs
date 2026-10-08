@@ -45,7 +45,7 @@ pub mod stream;
 pub mod transfer;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -480,42 +480,58 @@ impl TransferManager {
             }
             record.deadline = next_deadline;
 
+            let mut temp = None;
             if next.is_terminal() {
                 // Anything still copying stops now.
                 let _ = record.cancel.send(true);
                 // The challenge has no further use and is a key.
                 record.challenge = None;
+                temp = record.temp.take();
             }
-            record.snapshot()
+            let snapshot = record.snapshot();
+
+            // Removed before the lock is released, not after: the terminal
+            // state is visible to `snapshot_one` the moment the lock drops,
+            // and whoever reads `Failed` must not still find the partial file
+            // on disk. Releasing first left exactly that window open (#105).
+            // The price is one unlink under the map lock per ended receive.
+            if let Some(path) = temp {
+                remove_partial(id, &path).await;
+            }
+            snapshot
         };
 
-        if next.is_terminal() {
-            self.clean_up_temp(id).await;
-        }
         self.publish(snapshot);
         true
     }
 
     /// Removes the partial file of a transfer that will not complete.
     ///
-    /// A `.part` file left behind after a failure is not merely untidy: it is
-    /// unverified peer-supplied data sitting in the user's download folder.
+    /// For the stale-accept path only: a terminal `transition` removes its
+    /// own partial file. This one is for a temp file opened after that ran.
     async fn clean_up_temp(&self, id: TransferId) {
-        let temp = {
-            let mut transfers = self.transfers.lock().await;
-            transfers.get_mut(&id).and_then(|r| r.temp.take())
-        };
-        if let Some(path) = temp {
-            if let Err(e) = tokio::fs::remove_file(&path).await {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    // The path is local, not peer-supplied, so logging the
-                    // error kind is safe; the path itself is not logged.
-                    tracing::warn!(transfer = %id, error = %e, "could not remove a partial file");
-                }
-            }
+        let mut transfers = self.transfers.lock().await;
+        if let Some(path) = transfers.get_mut(&id).and_then(|r| r.temp.take()) {
+            remove_partial(id, &path).await;
         }
     }
+}
 
+/// Deletes a transfer's `.part` file.
+///
+/// A `.part` file left behind after a failure is not merely untidy: it is
+/// unverified peer-supplied data sitting in the user's download folder.
+async fn remove_partial(id: TransferId, path: &Path) {
+    if let Err(e) = tokio::fs::remove_file(path).await {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            // The path is local, not peer-supplied, so logging the error
+            // kind is safe; the path itself is not logged.
+            tracing::warn!(transfer = %id, error = %e, "could not remove a partial file");
+        }
+    }
+}
+
+impl TransferManager {
     /// Ends a transfer and tells the peer why.
     async fn fail(&self, id: TransferId, reason: FailureReason) {
         let next = if reason.is_cancellation() {
