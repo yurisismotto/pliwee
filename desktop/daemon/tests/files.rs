@@ -1807,6 +1807,52 @@ async fn f14_losing_the_control_session_mid_transfer_fails_it_and_cleans_up() {
     assert!(server.completed_files().is_empty());
 }
 
+/// The terminal state and the partial file's removal are one step.
+///
+/// When they were two steps (#105), f14 — which polls every 10 ms — only
+/// rarely landed between them. This observer does not sleep, and sixteen
+/// transfers at once make that window all but certain to be hit if it is
+/// ever reopened.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn f14_a_failed_transfer_is_never_visible_with_its_partial_file() {
+    async fn one(seed: u8) {
+        let server = TestServer::start().await;
+        let (phone, captured) = TestClient::new_raw("phone");
+        let session = paired(&server, &phone).await;
+
+        let id = TransferId::from_bytes(&[seed; 16]).expect("id");
+        let _io = start_stalled_transfer(&server, &phone, &captured, &session, id, 2_000_000).await;
+        assert!(!server.partial_files().is_empty());
+
+        session.close().await;
+
+        let deadline = tokio::time::Instant::now() + GRACE;
+        let snapshot = loop {
+            let current = server.transfers.snapshot_one(id).await.expect("record");
+            if current.state.is_terminal() {
+                break current;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "transfer {id} did not settle within {GRACE:?} (state: {})",
+                current.state
+            );
+            tokio::task::yield_now().await;
+        };
+        assert_eq!(snapshot.state, TransferState::Failed);
+        assert!(
+            server.partial_files().is_empty(),
+            "`failed` was observable while the partial file was still on disk: {:?}",
+            server.partial_files()
+        );
+    }
+
+    let runs: Vec<_> = (0..16u8).map(|n| tokio::spawn(one(0xa0 + n))).collect();
+    for run in runs {
+        run.await.expect("a run panicked; its message is above");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // F15 — revocation during a transfer
 // ---------------------------------------------------------------------------

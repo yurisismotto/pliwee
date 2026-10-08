@@ -4,6 +4,7 @@ import io.github.yurisismotto.pliwee.capability.ClipboardCapability
 import io.github.yurisismotto.pliwee.capability.FilesCapability
 import io.github.yurisismotto.pliwee.clipboard.ClipboardPolicy
 import io.github.yurisismotto.pliwee.identity.Fingerprint
+import io.github.yurisismotto.pliwee.store.AddressHint
 import io.github.yurisismotto.pliwee.store.PeerTarget
 import io.github.yurisismotto.pliwee.store.TrustStore
 import org.junit.Assert.assertEquals
@@ -53,7 +54,7 @@ class PeerTargetTest {
         fingerprint = fingerprint(seed),
         pairedAtUnix = 1_700_000_000L + seed,
         grantedCapabilities = grants,
-        addresses = listOf("192.168.68.${70 + seed}:55432"),
+        addressHints = listOf(AddressHint("192.168.68.${70 + seed}", 55432)),
         clipboardPolicy = clipboard,
     )
 

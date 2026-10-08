@@ -56,6 +56,7 @@ fn peer(fingerprint: Fingerprint, name: &str) -> TrustedPeer {
             when_sink_locked: LockPolicy::Full,
             allow_dismiss_sync: true,
         },
+        address_hints: Vec::new(),
     }
 }
 

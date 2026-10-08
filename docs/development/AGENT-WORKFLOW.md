@@ -14,6 +14,23 @@ jobs are written and await their first observed run; the worker itself is still
 off, and the canary could not run through it — see
 [§ The canary](#the-canary).
 
+**2026-10-07, reconciled against the repository and GitHub.** The two
+paragraphs above are superseded and left as written. Since then:
+
+* the worker has been on `main` since PR #36;
+* runner `fedora-agent` (labels `self-hosted, Linux, X64, pliwee-agent`) is
+  online;
+* `PLIWEE_AGENT_WORKER=enabled`;
+* the ruleset requires `rust-workspace` and `harness-selftests`;
+* canary #34 passed through the workflow (PR #38), and the worker has since
+  run #39, #41, #43 and #46.
+
+Branch `feature/agent-night-autopilot` adds the credential sandbox, the
+bundle-based publication path and the night coordinator
+([§ Night autopilot](#night-autopilot)). None of it is active until the owner
+merges it and takes the decisions in
+[§ Owner decisions](#owner-decisions).
+
 [`AGENTS.md`](../../AGENTS.md) remains the vendor-neutral source of truth and
 overrides everything below. This document explains the process and its
 reasons; the procedure an agent follows is
@@ -137,6 +154,13 @@ Automated development preserves it:
 | `agent:blocked` | workflow or worker | stopped before code: a dependency, ADR, SPEC or decision is missing; the comment says which |
 | `agent:review` | workflow | finished; a draft PR and its CI await the owner |
 | `agent:failed` | workflow | gave up, or a verification failed; the comment links the evidence |
+| `agent:queued` | **owner only** | approved for pickup by a night session; the coordinator promotes it to `agent:ready` when its turn comes |
+| `agent:owner-decision` | workflow | the worker found a question only the owner can answer; never picked up again until the owner removes it |
+| `agent:derived` | coordinator | created from a worker's proposal (AGENT-EXECUTION-SPEC.md § 5); its author is `github-actions[bot]` |
+| `agent:session` | coordinator | a night session's ledger issue, written by `github-actions[bot]` only |
+
+The last four labels belong to the night autopilot branch and are created when
+it is activated ([§ Night autopilot — activation](#activation-and-rollback)).
 
 The worker never picks up an open issue on its own initiative. Re-applying
 `agent:ready` after a blocker is resolved restarts it.
@@ -159,6 +183,17 @@ not a commitment or a specification"). The worker would correctly block on
 them. Implementation issues should be cut from them once their ADRs and SPECs
 exist. [`.github/ISSUE_TEMPLATE/agent-task.md`](../../.github/ISSUE_TEMPLATE/agent-task.md)
 gives the shape.
+
+For a night session, a result of `BLOCKED` or
+`OWNER_DECISION_REQUIRED` is **issue-scoped**. The issue is left labelled for
+the owner and is not picked up again, but the coordinator continues with the
+next independent eligible issue. One unresolved design question must not waste
+the rest of an unattended night.
+
+`SECURITY` and `FAILED_INFRA` remain **session-fatal**. They indicate that the
+execution boundary or the trusted infrastructure can no longer be assumed
+safe/correct. Movement of protected `main`, multiple session locks, the kill
+switch and session limits remain session-level stop conditions as well.
 
 ## The dependency gate
 
@@ -280,6 +315,238 @@ both without a path filter so that they can become required checks:
 
 They are kept apart on purpose: a red product test and a red harness self-test
 are different findings, and the second means a gate can no longer be believed.
+
+## Night autopilot
+
+From "one label starts one worker" to a coordinator that runs a queue the
+owner approved, one issue at a time, for hours, and stops itself. Designed,
+built and self-tested on 2026-10-07 on `feature/agent-night-autopilot`.
+**Not active.** The execution format is
+[AGENT-EXECUTION-SPEC.md](AGENT-EXECUTION-SPEC.md).
+
+### Execution autonomy, not governance autonomy
+
+| The night autopilot may | It may not — and what stops it |
+| --- | --- |
+| pick the next issue **the owner queued** (`agent:queued`) | pick anything else: `decide` selects only owner-authored queued issues or valid derived ones |
+| branch, implement, test, commit, in a sandbox | reach a credential: `sandbox.sh` hides them, and its probe refuses to start otherwise |
+| publish the branch and a draft PR, through trusted steps | merge, mark ready, enable auto-merge: no step does, the model has no token, and the PR is checked to be a draft with auto-merge off |
+| create derived issues within limits | recurse without bound: `max_derived`, `max_derived_per_run` and `max_depth`, ceilings in code |
+| promote the next issue | run unbounded: `max_issues`, `max_hours`, `max_consecutive_failures`, `max_retries` |
+| record evidence and classify | grade its own work: G0/G5/G8 are measured by trusted steps, G1–G4/G7 by CI; the model's own claims are recorded as *reported* |
+| propose a change to its own rules | apply one: protected paths are refused by `agent-guard.sh paths` and by the owner-merge preflight, and `derive-check` turns such a proposal into an `agent:owner-decision` issue |
+
+### Architecture and trust boundaries
+
+```
+ owner ── queues issues (agent:queued) ── dispatches "Agent · night session"
+   │                                              │  self-tests on the runner:
+   │                                              │  guard, coordinator, sandbox, pipeline
+   │                                              ▼
+   │                         coordinator.sh start → session issue (bot) → tick
+   │                                              │ PROMOTE: ledger first (bot), then
+   │                                              │ agent:ready with the runner's login
+   ▼                                              ▼
+ GitHub ◀──────────── Agent · issue worker (self-hosted, trusted steps from main)
+   ▲  labels, comments, ledger:       │ identity · gate · lock · fresh clone · brief
+   │  GITHUB_TOKEN (cannot push)      │
+   │                                  ▼
+   │                  ┌──────────── sandbox.sh (bubblewrap) ────────────┐
+   │                  │ Claude + the skill, in the work copy             │
+   │                  │ no token · no gh login · no runner process      │
+   │                  │ read-only $HOME · writes: work copy, outbox     │
+   │                  └───────────────┬──────────────────────────────────┘
+   │                                  │ work.bundle + outbox (data only)
+   │                                  ▼
+   │  push + draft PR:   worker-pipeline.sh verify in a CLEAN clone, trusted guard,
+   └── runner's login    no checkout → push → draft PR → CI → record → tick → next
+```
+
+| Boundary | Inside | What crosses it |
+| --- | --- | --- |
+| the sandbox | the model and every build it runs | the brief in; the work copy, `status.json`, `comment.md`, proposals and `work.bundle` out — all read as data |
+| the trusted steps | scripts copied from `main` before the model ran | `GITHUB_TOKEN` for labels, comments and the ledger; the runner's login for push, PR and promotion only |
+| GitHub | the ruleset, required checks, the owner's review | draft PRs, issues, the ledger |
+
+The work copy is never touched by git outside the sandbox. Git executes
+configuration — `core.fsmonitor`, `core.hooksPath`, filter drivers — and the
+model can write any of it. So the work leaves as a bundle, and verification
+and the push run in a clone the trusted step made. `worker-pipeline.sh
+--selftest` proves both halves: a planted `core.fsmonitor` **does** fire when
+git runs in the work copy, and fires nowhere in the pipeline.
+
+### Identities and what each can do
+
+| Identity | Where | Can | Cannot |
+| --- | --- | --- | --- |
+| the model | inside `sandbox.sh` | edit the work copy, commit locally (as the owner's git identity, from `~/.gitconfig`), write the outbox | any GitHub API call, any push; it holds no credential |
+| `GITHUB_TOKEN` of the worker and session jobs | trusted steps | issues: write, contents: read, actions: read — labels, comments, ledger, the session issue | push, merge, start a workflow |
+| the runner account's gh login | trusted steps only | push the verified branch, open the draft PR, promote the next issue | — it **can** merge; see [§ The merge boundary](#the-merge-boundary) |
+| the `pliwee-worker` App (`PLIWEE_WORKER_IDENTITY=app`) | trusted steps only, short-lived tokens | the same three things, replacing the runner's login | merge, write `main`, other branches, tags, workflows, settings — [§ Execution identity](#execution-identity) |
+| the owner | GitHub | queue, review, `@pliwee merge`, decide | — |
+
+### State machine
+
+```
+            owner: agent:queued                     owner: agent:ready (single run)
+                   │                                          │
+          tick: PROMOTE (ledger, then label) ──▶ agent:ready ◀┘
+                                                      │ worker claims: label + lock comment (run id)
+                                                      ▼
+                                                agent:working
+         ┌─────────────┬──────────────┬───────────────┼──────────────────┬───────────────┐
+   mechanical gate   worker:        worker:        verified,          refused by a     run died
+     blocked         blocked     owner-decision   published, CI       guard / failed   (stale lock)
+         ▼             ▼              ▼               ▼                  ▼               ▼
+   agent:blocked  agent:blocked  agent:owner-    agent:review       agent:failed    RECOVER → agent:queued
+                                   decision     (owner merges →                  (nothing pushed, attempts left)
+                                                 closed = done)                   else STOP
+```
+
+Classes and which of them stop the session: AGENT-EXECUTION-SPEC.md § 6.
+
+### Scheduler — `coordinator.sh decide`
+
+A pure function of one snapshot of GitHub state. If the snapshot is
+incomplete, it makes no decision. In order:
+
+1. no open session → **NOOP**; more than one → **STOP**;
+2. kill switch `PLIWEE_AGENT_NIGHT` not `enabled`, sandbox not required, `main`
+   moved since the session opened, or past `max_hours` → **STOP**;
+3. a fatal class anywhere in this session's ledger, or
+   `max_consecutive_failures` reached → **STOP**;
+4. **locks.** Two `agent:working` → **STOP**. One, whose run is alive →
+   **WAIT**. Stale, with nothing pushed and an attempt left → **RECOVER**
+   (requeue). Stale otherwise → **STOP**;
+5. an `agent:ready` the session promoted → **WAIT**, until
+   `runner_start_minutes`; then **STOP**, because the runner is offline or
+   the trigger was lost;
+6. `max_issues` promoted → **IDLE**;
+7. otherwise the eligible issue with the highest priority, then the lowest
+   number → **PROMOTE**; none → **IDLE**.
+
+Eligible means all of these:
+
+* open and `agent:queued`;
+* not in review, blocked, failed or waiting for an owner decision;
+* last edited by nobody or by the owner;
+* no open blocker;
+* attempts below `1 + max_retries`;
+* either owner-authored, or a bot-authored `agent:derived` issue that passes
+  `derive-check` within `max_depth`.
+
+**STOP** and **IDLE** write the morning report and close the session issue.
+
+Ticks happen:
+
+* at the end of every worker run, after its result is recorded;
+* when a session opens;
+* from the watchdog schedule at :17 and :47, which does nothing without an
+  open session.
+
+Only one issue is ever in flight. The coordinator promotes nothing while
+anything is `agent:working` or `agent:ready`, so two workers never share an
+issue or race over the same files.
+
+### Night mode
+
+| | |
+| --- | --- |
+| start | the owner queues issues, then runs *Agent · night session* (`workflow_dispatch`) with its limits. It refuses to open unless guard, coordinator, sandbox and pipeline self-tests pass on the runner, as the runner account |
+| run | each worker run ends with `record` and `tick`; the next worker queues behind it on the runner |
+| stop | any STOP condition; closing the session issue; `PLIWEE_AGENT_NIGHT` off; disabling the workflow |
+| morning | the last comment on the session issue: per issue, its attempts, result and measured gates; derived issues; recoveries; the stop reason. Each worker report is on its own issue, and each PR is a draft |
+
+### Retry, locking, recovery
+
+* **Lock** — `agent:working` plus a bot comment `<!-- pliwee-lock {"run_id":…} -->`
+  written when the issue is claimed. A lock is live while that run is queued
+  or in progress.
+* **Retry** — only through the coordinator, only `max_retries` extra
+  attempts, only when nothing was pushed: the worker refuses to reuse a
+  published branch. A failure after publication is for the owner (or a future
+  Phase D).
+* **Recovery** — a stale lock with nothing pushed is requeued once per
+  attempt left. Anything else stops the session with the evidence.
+
+### Generated work
+
+AGENT-EXECUTION-SPEC.md § 5 has the format, the check and the limits. Derived
+work that depends on its parent is blocked by the parent until the owner
+merges the parent's PR, so a night never builds on unreviewed work.
+
+### Incident handling and audit trail
+
+* **Something is wrong** — set `PLIWEE_AGENT_NIGHT` off, or close the session
+  issue. The next tick stops it, and no promotion happens after that. A run in
+  progress: `gh run cancel <id>`.
+* **The record** — the session issue's bot-written ledger (`promote`,
+  `result` with class and gates, `derived`, `recover`, `stop`); the lock and
+  worker-report comments on each issue; each run's log; each draft PR. Only
+  comments by `github-actions[bot]` count as ledger or lock, and any `<!--` in
+  the model's own text is neutralised before it is posted.
+
+### Local canary — 2026-10-07
+
+The sandboxed worker was run offline: the real skill, the real Claude Code
+(2.1.292), the real `sandbox.sh` and `worker-pipeline.sh`, against a local bare
+remote seeded from this branch, with a synthetic issue #9001. The issue asked
+for one self-test case, for a final line ending in CR with no newline. Nothing
+reached GitHub.
+
+| Step | Observed |
+| --- | --- |
+| brief | written, 2763 bytes, issue fenced with a random delimiter |
+| sandbox probe | `ok    sandbox: no token in the environment, credentials hidden, no runner process, $HOME read-only` |
+| worker | 29 turns, USD 0.50, 76 s; `status.json` outcome `done`; `comment.md` with before/after evidence |
+| commit | `e5a36b8`, author and committer `Yuri C. Sismotto <yuri.sismotto@hotmail.com>`, no trailer; one file, +3 −1 |
+| bundle → clean clone | `ok    branch`, `ok    commits: 1 … all by the owner`, `ok    paths: 1 file(s) … none protected` |
+| push (local remote) | `ok    published feature/issue-9001-worker at e5a36b8` |
+| re-run by hand | `--selftest`: 12 passed, 0 failed (was 11); `bash -n` clean |
+| class | `FAILED_INFRA` — correct: offline, CI never ran, so the result cannot be PASS |
+
+The first attempt was a FAIL that came from the test harness, not the product
+(AGENTS.md's symmetric rule). The work copy sat under `~/.claude/`, which
+Claude Code treats as its own configuration, so every edit needed an approval
+nobody could give. The worker refused to work around the permission and said
+so. On the runner the work copy is under `_work/_temp`. That attempt also
+showed `bash -n` was not in the worker's allow list; it is now.
+
+**Not executed here:** the same path through GitHub Actions, CI on a worker PR,
+`derive` and `start`/`report` against the real API, and a multi-issue session.
+They need this branch on `main`
+([§ Activation and rollback](#activation-and-rollback), steps 3–4).
+
+### Activation and rollback
+
+Order, each step observed before the next:
+
+1. Merge `feature/agent-night-autopilot` (owner). The worker becomes
+   sandbox-only from that merge on.
+2. Create the labels:
+   ```bash
+   gh label create agent:queued         -R yurisismotto/pliwee -c 0e8a16 -d "Owner approved for pickup by a night session"
+   gh label create agent:owner-decision -R yurisismotto/pliwee -c d93f0b -d "Worker stopped: a question only the owner can answer"
+   gh label create agent:derived        -R yurisismotto/pliwee -c c5def5 -d "Created by the coordinator from a worker proposal"
+   gh label create agent:session        -R yurisismotto/pliwee -c 5319e7 -d "Night session ledger, written by github-actions[bot]"
+   ```
+3. A single-issue canary through the sandboxed worker: the owner applies
+   `agent:ready` to a small owner-authored issue. Expect a draft PR built
+   from the bundle, and a worker-report comment.
+4. `gh variable set PLIWEE_AGENT_NIGHT --body enabled -R yurisismotto/pliwee`.
+   Queue two small issues, dispatch *Agent · night session* with
+   `max_issues=2`, and expect: promote, result, promote, result, IDLE, a
+   morning report.
+
+Rollback, fastest first:
+
+```bash
+gh variable delete PLIWEE_AGENT_NIGHT -R yurisismotto/pliwee
+gh workflow disable "Agent · night session" -R yurisismotto/pliwee
+```
+
+Reverting the merge restores the unsandboxed worker; that is a security
+regression, not a neutral rollback.
 
 ## Phase D — CI self-repair (designed, not built)
 
@@ -470,23 +737,106 @@ A check is removed from the list only by the owner, with the reason written
 here. If a required check is renamed, add the new name, watch it pass, and only
 then remove the old one.
 
+## Execution identity
+
+The autonomous path uses separate execution identities. Claude itself has no
+GitHub identity.
+
+| Identity | Capability | Explicitly absent |
+| --- | --- | --- |
+| **owner** — `yurisismotto` | administration, rulesets, governance, final approval and merge | — |
+| **publisher** — `pliwee-worker[bot]` | Contents write for `feature/issue-N-worker`; Issues write; Checks/Actions read | Pull requests, Administration, Workflows, Secrets |
+| **PR broker** — `pliwee-pr-broker[bot]` | Pull requests write for Draft PR lifecycle | Contents, Administration, Workflows, Issues |
+| **model** — Claude in `sandbox.sh` | implementation in the isolated work copy | every GitHub credential |
+
+### Why two Apps
+
+Identity certification on 2026-10-07 proved that one App holding both
+Contents:write and Pull requests:write could approve and merge an
+owner-authored PR into the disposable `certify/main` branch.
+
+`main` never moved.
+
+V2 separates those capabilities:
+
+- the publisher can write Git objects but cannot manipulate Pull Requests;
+- the PR broker can manipulate Pull Requests but cannot write repository
+  Contents;
+- neither App is an administrator;
+- protected integration refs use an owner/admin-only update rule.
+
+A merge therefore still needs the owner's server-side ability to update the
+protected destination ref.
+
+### Draft / Ready
+
+Draft/Ready is **presentation state, not an authorization boundary**.
+
+The trusted PR broker opens every autonomous PR as Draft and the trusted
+publisher never intentionally marks it Ready. However, identity certification
+on 2026-10-07 measured that the publisher installation token could invoke the
+GraphQL `markPullRequestReadyForReview` mutation even though REST Pull Request
+operations were denied and the App declared no Pull requests permission.
+
+A compensating `ready_for_review` workflow was also not a reliable server-side
+barrier for that mutation, so it has been removed rather than documented as a
+control that the platform did not prove.
+
+This does not grant merge authority. Review state is intentionally excluded
+from the security model.
+
+The authoritative boundary is:
+
+- worker branch publication;
+- required CI;
+- owner approval;
+- owner-only update of the protected destination ref;
+- owner merge.
+
+The autonomous handoff still starts as Draft for the owner's morning review,
+but security does not depend on it remaining Draft.
+
+### Negative security gates
+
+A network failure is not evidence of a security control.
+
+`identity-certify.sh` classifies DNS, connection, TLS, rate-limit and GitHub
+5xx failures as BLOCKED. A negative gate becomes PASS only after a
+policy/permission denial is actually observed.
+
+### Git authorship
+
+Automation identity does not change Git authorship. Worker commits remain:
+
+`Yuri C. Sismotto <yuri.sismotto@hotmail.com>`
+
+### Activation state
+
+Until Identity V2 certification and the real canary both pass:
+
+- `PLIWEE_AGENT_WORKER=disabled`;
+- `PLIWEE_AGENT_NIGHT` remains off;
+- no autonomous overnight session is permitted.
+
 ## The merge boundary
 
-The ruleset stops a direct push, a force-push and a deletion of `main` for
-every actor. It does **not** stop a merge: it requires a pull request with
-**zero** approvals, because the owner is the only maintainer and GitHub does
-not let an author approve their own PR. The worker's fine-grained token
-belongs to the owner's account and carries *Contents: write*, which is enough
-to merge a green PR through the API. What stops the worker merging today is
-the deny rules, the absence of `gh api`/`gh pr merge` from its allow list, and
-the post-run check — not the server.
+The protected-ref update rule is the final server-side boundary.
 
-Making it server-side means a separate actor for the worker: a machine
-account or GitHub App with *Write* role, its own token, then one required
-approval and a bypass for the repository-admin role in `pull_request` mode only
-(so the owner still merges their own PRs, and the worker never can). Commit
-authorship is unaffected — it comes from git, not from the token. That is an
-owner decision, not taken; until it is, this boundary is advisory.
+The publisher's Contents permission is required for worker-branch publication,
+but it has no Pull requests permission. The broker has Pull requests
+permission but no Contents permission. Neither has a bypass.
+
+`main` additionally keeps Pull Request review rules, CODEOWNERS,
+last-push approval and required checks pinned to GitHub Actions integration
+15368.
+
+Final authorization is therefore:
+
+`agent -> worker branch -> Draft PR -> CI -> owner review -> owner merge`
+
+never:
+
+`agent -> main`.
 
 ## Rollback
 
@@ -572,6 +922,17 @@ Revisiting this is a new owner decision.
 
 ### Still open
 
+* **Activate the night autopilot branch** — merge, labels, the canaries in
+  [§ Night autopilot — activation](#activation-and-rollback). Recommended, not
+  approved.
+* **The execution identity split** — implemented, not active. It needs the
+  owner's steps in [§ Execution identity](#execution-identity). Night mode is
+  not READY without it.
+* **Required checks pinned to GitHub Actions** — *applied 2026-10-07 04:25Z*
+  to ruleset `24443525` (`integration_id 15368`, verified from the check runs
+  on `main`), after a fake status was measured satisfying the name-only rule
+  ([AGENT-EXECUTION-IDENTITY-V1.md § G8](../certification/security/AGENT-EXECUTION-IDENTITY-V1.md)).
+
 * **A separate actor for the worker**, so that the merge boundary is
   server-side ([§ The merge boundary](#the-merge-boundary)).
 
@@ -591,3 +952,37 @@ Reviewed 2026-10-04 over every workflow on this branch:
 
 Residual risk: a fork PR still runs arbitrary code on a GitHub-hosted runner
 once approved. That is the runner's sandbox, and it holds nothing of ours.
+
+## Worker publication is fail-closed
+
+A worker commit is not, by itself, a successful autonomous handoff.
+
+The trusted workflow may mint the publisher identity and create a Draft PR only
+when all of the following are true:
+
+1. the Claude execution step completed successfully;
+2. the worker's structured `status.json` reports `outcome: done`;
+3. the worker produced a verifiable commit bundle;
+4. the trusted clean-clone guard accepts that bundle.
+
+`failed`, a missing/invalid result, or an inconsistent `done` result fails
+closed before the publisher token is minted. `blocked` and `owner-decision`
+remain non-publishable hand-back states.
+
+### Rust Tier 1 environment
+
+The self-hosted runner owns a rustup stable toolchain with `rustfmt` and
+`clippy`. The toolchain remains read-only to the model.
+
+For sandboxed execution the workflow sets a dedicated writable Cargo cache at:
+
+`~/.cache/pliwee-cargo`
+
+The sandbox already exposes `~/.cache` as writable build state while keeping
+the rest of `$HOME` read-only and hiding GitHub, SSH and other credentials.
+
+Consequently, Rust work can execute the repository's Tier 1 formatting,
+linting and test commands inside the credential-free sandbox before handoff.
+
+GitHub CI remains a separate second measurement after publication. A CI failure
+is never converted into a PASS merely because the worker reported success.

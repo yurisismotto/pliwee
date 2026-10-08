@@ -662,6 +662,9 @@ impl SessionHost for DaemonState {
             // the capability, and a locked desktop then shows an app name
             // rather than a message.
             notification_policy: NotificationPolicy::default(),
+            // A pairing proves a key, not a route. Hints are learned only
+            // from later authenticated sessions (Mesh V2 SPEC §5).
+            address_hints: Vec::new(),
         };
         store.add_peer(peer)
     }

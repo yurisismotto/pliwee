@@ -3,7 +3,7 @@
 //! # What the pairing token is and is not
 //!
 //! The token is a short-lived, single-use, 160-bit random secret shown in a
-//! QR code. It is **not** a credential: it never authorizes anything by
+//! QR code or, in text mode, as a typed code ([`text_code`]). It is **not** a credential: it never authorizes anything by
 //! itself, it is never sent over the wire, and it is destroyed the moment
 //! pairing completes. Its only job is to prove, once, that the human holding
 //! the phone is the same human sitting at the computer.
@@ -42,6 +42,8 @@
 //! We use HMAC-SHA256, a standard MAC, keyed by the token. No custom
 //! construction (implementation rule 1).
 
+pub mod text_code;
+
 use std::time::{Duration, Instant};
 
 use hmac::{Hmac, Mac};
@@ -73,7 +75,7 @@ pub const DEFAULT_TOKEN_TTL: Duration = Duration::from_secs(120);
 /// attempt into an immediately visible failure.
 pub const MAX_FAILED_ATTEMPTS: u32 = 3;
 
-/// The secret behind a QR code.
+/// The secret behind a QR code or a text code.
 ///
 /// Deliberately not `Clone` and not `Debug`-printable, and zeroed on drop.
 pub struct PairingToken([u8; TOKEN_LEN]);
@@ -85,6 +87,14 @@ impl PairingToken {
             .try_fill_bytes(&mut buf)
             .map_err(|_| Error::Store("system CSPRNG unavailable".into()))?;
         Ok(Self(buf))
+    }
+
+    /// Wraps exactly [`TOKEN_LEN`] bytes, for known-answer tests and for a
+    /// token decoded elsewhere. The array type is the length check: a secret
+    /// of any other size does not compile. A fresh token comes from
+    /// [`PairingToken::generate`].
+    pub fn from_bytes(bytes: [u8; TOKEN_LEN]) -> Self {
+        Self(bytes)
     }
 
     /// Unpadded RFC 4648 base32, uppercase: 32 characters for 20 bytes.

@@ -8,6 +8,7 @@ import io.github.yurisismotto.pliwee.files.MimeTypes
 import io.github.yurisismotto.pliwee.files.OpenAction
 import io.github.yurisismotto.pliwee.files.TransferState
 import io.github.yurisismotto.pliwee.identity.Fingerprint
+import io.github.yurisismotto.pliwee.store.AddressHint
 import io.github.yurisismotto.pliwee.store.TrustStore
 import io.github.yurisismotto.pliwee.ui.FilesMapping
 import io.github.yurisismotto.pliwee.ui.FilesMapping.Direction
@@ -56,7 +57,7 @@ class FilesUxTest {
         fingerprint = fingerprint(seed),
         pairedAtUnix = 1_700_000_000L + seed,
         grantedCapabilities = setOf(FilesCapability.ID),
-        addresses = listOf("192.168.68.${70 + seed}:55432"),
+        addressHints = listOf(AddressHint("192.168.68.${70 + seed}", 55432)),
     )
 
     private val fedora = peer("Fedora", 1)

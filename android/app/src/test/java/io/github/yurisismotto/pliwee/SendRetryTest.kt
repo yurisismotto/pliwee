@@ -7,6 +7,7 @@ import io.github.yurisismotto.pliwee.files.FileTransferManager
 import io.github.yurisismotto.pliwee.files.StreamAuth
 import io.github.yurisismotto.pliwee.files.TransferState
 import io.github.yurisismotto.pliwee.identity.Fingerprint
+import io.github.yurisismotto.pliwee.store.AddressHint
 import io.github.yurisismotto.pliwee.store.PeerTarget
 import io.github.yurisismotto.pliwee.store.TrustStore
 import io.github.yurisismotto.pliwee.ui.UiMapping
@@ -344,7 +345,7 @@ class SendRetryTest {
         fingerprint = fingerprint(seed),
         pairedAtUnix = 1_700_000_000L + seed,
         grantedCapabilities = grants,
-        addresses = listOf("192.168.68.${70 + seed}:55432"),
+        addressHints = listOf(AddressHint("192.168.68.${70 + seed}", 55432)),
     )
 
     private val fedora = peer("Fedora", 1, setOf(FilesCapability.ID, BatteryCapability.ID))

@@ -1,0 +1,125 @@
+# Agent — the night session. OFF until PLIWEE_AGENT_NIGHT is exactly `enabled`.
+#
+# The owner queues issues (`agent:queued`) and dispatches this workflow. It
+# proves the sandbox on the runner, opens a session issue — the ledger, written
+# by github-actions[bot] only — and promotes the first eligible issue to
+# `agent:ready`. Each worker run ends by recording its result and promoting the
+# next one, so the session runs on without anyone writing a prompt, until a
+# limit, a stop condition, an owner decision or an empty queue ends it. The
+# morning report is the last comment on the session issue.
+#
+# The schedule is only a watchdog: it ticks an open session, so a stale lock or
+# a promotion the runner never picked up is found and the session stopped or
+# recovered (.github/agent/coordinator.sh, `decide`). With no open session a
+# tick does nothing.
+#
+# Stop it: close the session issue, or set PLIWEE_AGENT_NIGHT to anything else,
+# or disable this workflow. docs/development/AGENT-WORKFLOW.md § Night autopilot.
+
+name: Agent · night session
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_issues:
+        description: 'Issues to start, at most (ceiling 20)'
+        default: '5'
+      max_hours:
+        description: 'Hours the session may run (ceiling 14)'
+        default: '10'
+      max_derived:
+        description: 'Derived issues it may create (ceiling 10)'
+        default: '3'
+      max_depth:
+        description: 'Derived-issue chain depth (ceiling 3)'
+        default: '2'
+      max_retries:
+        description: 'Retries per issue after a stale lock or a product failure (ceiling 2)'
+        default: '1'
+      max_consecutive_failures:
+        description: 'Consecutive failures before stopping (ceiling 5)'
+        default: '2'
+  schedule:
+    - cron: '17,47 * * * *'
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+concurrency:
+  group: agent-night
+  cancel-in-progress: false
+
+jobs:
+  session:
+    if: >-
+      vars.PLIWEE_AGENT_NIGHT == 'enabled' &&
+      vars.PLIWEE_AGENT_WORKER == 'enabled' &&
+      (github.event_name == 'schedule' || github.actor == github.repository_owner)
+    runs-on: [self-hosted, linux, pliwee-agent]
+    environment: agent-worker
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLIWEE_REPO: ${{ github.repository }}
+      PLIWEE_AGENT_NIGHT: ${{ vars.PLIWEE_AGENT_NIGHT }}
+      PLIWEE_AGENT_SANDBOX: required
+      PLIWEE_WORKER_IDENTITY: ${{ vars.PLIWEE_WORKER_IDENTITY }}
+      PLIWEE_NIGHT_MAX_ISSUES: ${{ inputs.max_issues }}
+      PLIWEE_NIGHT_MAX_HOURS: ${{ inputs.max_hours }}
+      PLIWEE_NIGHT_MAX_DERIVED: ${{ inputs.max_derived }}
+      PLIWEE_NIGHT_MAX_DEPTH: ${{ inputs.max_depth }}
+      PLIWEE_NIGHT_MAX_RETRIES: ${{ inputs.max_retries }}
+      PLIWEE_NIGHT_MAX_CONSECUTIVE_FAILURES: ${{ inputs.max_consecutive_failures }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Take a trusted copy of the coordinator
+        run: |
+          set -eu
+          t="$RUNNER_TEMP/trusted"; rm -rf "$t"; mkdir -p "$t/.github" "$t/packaging/tests/lib"
+          cp -a .github/agent "$t/.github/agent"
+          cp -a packaging/tests/lib/assert.sh "$t/packaging/tests/lib/assert.sh"
+          echo "COORD=$t/.github/agent/coordinator.sh" >> "$GITHUB_ENV"
+          echo "SANDBOX=$t/.github/agent/sandbox.sh" >> "$GITHUB_ENV"
+
+      # On this runner, as this account: a session never opens on a host
+      # where the sandbox does not hold.
+      - name: Preconditions — guard, coordinator and sandbox self-tests, owner identity
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -eu
+          "$(dirname "$COORD")/agent-guard.sh" identity
+          "$(dirname "$COORD")/agent-guard.sh" --selftest | tail -1
+          "$COORD" --selftest | tail -1
+          "$SANDBOX" --selftest | tail -1
+          "$(dirname "$COORD")/worker-pipeline.sh" --selftest | tail -1
+          w="$(mktemp -d)"; o="$(mktemp -d)"
+          "$SANDBOX" run --work "$w" --outbox "$o" -- true
+          rm -rf "$w" "$o"
+
+      - name: Open the session
+        if: github.event_name == 'workflow_dispatch'
+        run: '"$COORD" start'
+
+      # The coordinator stops any session not run as the App; this only gives
+      # it the App's token, scoped to issues, for the one promotion it may make.
+      - name: Mint the promotion token (GitHub App)
+        if: env.PLIWEE_WORKER_IDENTITY == 'app'
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PLIWEE_WORKER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PLIWEE_WORKER_APP_PRIVATE_KEY }}
+          permission-issues: write
+
+      - name: Tick
+        env:
+          PLIWEE_EXEC_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -eu
+          "$COORD" tick | tee "$RUNNER_TEMP/tick.txt"
+          { echo '### Night session tick'; echo; echo '```'; cat "$RUNNER_TEMP/tick.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

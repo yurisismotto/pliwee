@@ -1,0 +1,19 @@
+{
+  "name": "pliwee-worker",
+  "url": "https://github.com/yurisismotto/pliwee/blob/main/docs/development/AGENT-WORKFLOW.md#execution-identity",
+  "description": "Execution identity of the Pliwee autonomous worker: pushes feature/issue-N-worker branches and promotes issues. It cannot open/update PRs or merge.",
+  "public": false,
+  "redirect_url": "https://github.com/yurisismotto/pliwee",
+  "hook_attributes": {
+    "url": "https://github.com/yurisismotto/pliwee",
+    "active": false
+  },
+  "default_events": [],
+  "default_permissions": {
+    "metadata": "read",
+    "contents": "write",
+    "issues": "write",
+    "checks": "read",
+    "actions": "read"
+  }
+}

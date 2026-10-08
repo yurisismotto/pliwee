@@ -56,6 +56,9 @@ message Envelope {
     Pong pong = 22;
     Error error = 23;
     CapabilityMessage capability_message = 24;
+    // Protocol version 2 only; never sent to a version-1 peer (see
+    // SessionClose in core.proto).
+    SessionClose session_close = 25;
   }
 }
 

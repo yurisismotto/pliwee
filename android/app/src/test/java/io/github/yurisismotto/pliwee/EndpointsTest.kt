@@ -127,6 +127,60 @@ class EndpointsTest {
     }
 
     @Test
+    fun `two spellings of one IPv6 address are one attempt`() {
+        // A remembered hint is stored compressed; discovery resolves the same
+        // address and hands back the long form. Two attempts at one place
+        // would spend half a round on it.
+        val ordered = Endpoints.order(
+            listOf(at("fe80::1%wlan0"), at("fe80:0:0:0:0:0:0:1%wlan0"), at("2001:db8::1")),
+        )
+        assertEquals(listOf(at("2001:db8::1"), at("fe80::1%wlan0")), ordered)
+    }
+
+    // -- remembered hints and discovery ---------------------------------------
+
+    @Test
+    fun `stale remembered addresses cannot crowd out what discovery found`() {
+        // The computer has had four DHCP leases, each proved once, and is now
+        // at a fifth that only discovery knows. Every remembered address is
+        // IPv4 like the new one, so the family sort cannot separate them.
+        val remembered = listOf(
+            at("192.168.68.75"),
+            at("192.168.68.74"),
+            at("192.168.68.73"),
+            at("192.168.68.72"),
+        )
+        val discovered = listOf(at("192.168.68.76"))
+
+        val round = Endpoints.order(Endpoints.withDiscovered(remembered, discovered))
+
+        assertEquals(Endpoints.MAX_PER_ROUND, round.size)
+        assertTrue("the discovered address is dialled this round", at("192.168.68.76") in round)
+        assertEquals(
+            "the most recent remembered address first, then discovery, then the rest",
+            listOf(
+                at("192.168.68.75"),
+                at("192.168.68.76"),
+                at("192.168.68.74"),
+                at("192.168.68.73"),
+            ),
+            round,
+        )
+    }
+
+    @Test
+    fun `with one remembered address the order is what it always was`() {
+        assertEquals(
+            listOf(at("192.168.0.10"), at("192.168.0.11")),
+            Endpoints.withDiscovered(listOf(at("192.168.0.10")), listOf(at("192.168.0.11"))),
+        )
+        assertEquals(
+            listOf(at("192.168.0.11")),
+            Endpoints.withDiscovered(emptyList(), listOf(at("192.168.0.11"))),
+        )
+    }
+
+    @Test
     fun `a nonsense port is refused`() {
         assertTrue(Endpoints.order(listOf(at("192.168.0.10", 0))).isEmpty())
     }

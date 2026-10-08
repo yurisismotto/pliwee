@@ -149,6 +149,7 @@ jobs:
       # do not, and deliberately so — they test the *unix-fs adapter* rather
       # than the portable core:
       #
+      #   * `address_hints`       — `Store::open(dir)`, persisted routing-hint migration
       #   * `identity_and_store`  — `Store::open(dir)`, trust-store round trips
       #   * `identity_states`     — `probe_identity_at`, the 0600-mode refusal
       #   * `revoked_tombstone`   — the revoked-device tombstone lifecycle
@@ -192,6 +193,7 @@ jobs:
       - name: Core test files unchanged (guard for the exclusion below)
         run: |
           $expected = @(
+            'address_hints.rs',
             'frozen_vectors.rs',
             'identity_and_store.rs',
             'identity_seam.rs',
@@ -202,6 +204,7 @@ jobs:
             'portable_boundary.rs',
             'protocol.rs',
             'revoked_tombstone.rs',
+            'text_code.rs',
             'wire_identity.rs'
           ) | Sort-Object
           $actual = Get-ChildItem core/tests -Filter *.rs -File |
@@ -270,6 +273,7 @@ jobs:
             --test pairing `
             --test portable_boundary `
             --test protocol `
+            --test text_code `
             --test wire_identity
 
       # ---------------------------------------------------------------- 5 --

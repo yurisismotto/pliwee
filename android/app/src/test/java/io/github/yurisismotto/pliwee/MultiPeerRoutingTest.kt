@@ -6,6 +6,7 @@ import io.github.yurisismotto.pliwee.net.ConnectionCoordinator
 import io.github.yurisismotto.pliwee.net.ConnectionEvent
 import io.github.yurisismotto.pliwee.net.DialResult
 import io.github.yurisismotto.pliwee.net.Endpoints
+import io.github.yurisismotto.pliwee.store.AddressHint
 import io.github.yurisismotto.pliwee.store.PeerTarget
 import io.github.yurisismotto.pliwee.store.TrustStore
 import java.net.InetSocketAddress
@@ -53,7 +54,7 @@ class MultiPeerRoutingTest {
         fingerprint = fingerprint(seed),
         pairedAtUnix = 1_700_000_000L + seed,
         grantedCapabilities = emptySet(),
-        addresses = listOf("192.168.68.${70 + seed}:55432"),
+        addressHints = listOf(AddressHint("192.168.68.${70 + seed}", 55432)),
     )
 
     private val ubuntu = peer("omnibridge-u2404", 1)
@@ -85,7 +86,9 @@ class MultiPeerRoutingTest {
         }
 
         fun ownerOf(address: InetSocketAddress): TrustStore.TrustedPeer? =
-            peers.firstOrNull { p -> p.addresses.any { it == Endpoints.format(address) } }
+            peers.firstOrNull { p ->
+                p.addressHints.any { it.format() == Endpoints.format(address) }
+            }
     }
 
     private fun TestScope.coordinatorFor(
@@ -99,8 +102,7 @@ class MultiPeerRoutingTest {
         endpoints = {
             PeerTarget.resolve(tablet.peers, tablet.selectedHex)
                 .peerOrNull()
-                ?.addresses
-                ?.mapNotNull(Endpoints::parse)
+                ?.dialAddresses()
                 ?: emptyList()
         },
         // Exactly `ConnectionService.dial`: re-resolve, refuse when there is no
@@ -390,7 +392,7 @@ class MultiPeerRoutingTest {
         // Debian is chosen, but its remembered address now answers as Ubuntu —
         // a rebound DHCP lease, or a hostile responder. The pin is checked
         // against the target, so this is a security failure, not a session.
-        val movedDebian = debian.copy(addresses = ubuntu.addresses)
+        val movedDebian = debian.copy(addressHints = ubuntu.addressHints)
         val tablet = Tablet(peers = listOf(ubuntu, movedDebian), selectedHex = hex(movedDebian))
         tablet.online(ubuntu, movedDebian)
 

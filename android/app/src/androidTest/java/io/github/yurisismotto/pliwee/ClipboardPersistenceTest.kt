@@ -65,7 +65,7 @@ class ClipboardPersistenceTest {
                 fingerprint = peer,
                 pairedAtUnix = 1_700_000_000,
                 grantedCapabilities = setOf(ClipboardCapability.ID),
-                addresses = emptyList(),
+                addressHints = emptyList(),
             ),
         )
 
@@ -147,7 +147,7 @@ class ClipboardPersistenceTest {
                     fingerprint = peer,
                     pairedAtUnix = 1_700_000_000,
                     grantedCapabilities = setOf(ClipboardCapability.ID),
-                    addresses = emptyList(),
+                    addressHints = emptyList(),
                     clipboardPolicy = ClipboardPolicy(autoReceive = true, autoSend = true),
                 ),
             )
@@ -195,7 +195,7 @@ class ClipboardPersistenceTest {
                 pairedAtUnix = 1_700_000_000,
                 // Everything the policy can express, and no grant.
                 grantedCapabilities = emptySet(),
-                addresses = emptyList(),
+                addressHints = emptyList(),
                 clipboardPolicy = ClipboardPolicy(
                     allowSend = true,
                     allowReceive = true,

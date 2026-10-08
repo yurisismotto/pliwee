@@ -1,5 +1,5 @@
 {
-  "$comment": "Permissions for the headless issue worker only (claude -p --settings .github/agent/claude-settings.json). Not loaded by interactive sessions. In -p mode a command matching no allow rule is refused, so the allow list is the boundary and the deny list documents intent. Neither is a security boundary on its own: prefix rules can be sidestepped, which is why the git hooks, the token's scopes and the post-run verification exist. Path rules use Edit(...), which covers every file-editing tool including Write. See docs/development/AGENT-WORKFLOW.md \u00a7 Security model.",
+  "$comment": "Permissions for the headless issue worker only, which runs inside .github/agent/sandbox.sh with no GitHub credential (claude -p --settings .github/agent/claude-settings.json). Not loaded by interactive sessions. In -p mode a command matching no allow rule is refused, so the allow list is the boundary and the deny list documents intent. Neither is a security boundary on its own: prefix rules can be sidestepped, which is why the git hooks, the token's scopes and the post-run verification exist. Path rules use Edit(...), which covers every file-editing tool including Write. See docs/development/AGENT-WORKFLOW.md § Security model.",
   "permissions": {
     "defaultMode": "acceptEdits",
     "allow": [
@@ -21,6 +21,7 @@
       "Bash(git fetch origin:*)",
       "Bash(git rev-parse:*)",
       "Bash(git ls-files:*)",
+      "Bash(bash -n:*)",
       "Bash(./.github/agent/agent-guard.sh:*)",
       "Bash(cargo fmt:*)",
       "Bash(cargo clippy:*)",
@@ -32,17 +33,10 @@
       "Bash(./packaging/tests/packaging-checks.sh:*)",
       "Bash(./packaging/tests/harness-selftests.sh:*)",
       "Bash(./packaging/tests/release-signing-tests.sh:*)",
-      "Bash(./packaging/tests/evidence-whitespace-check.sh:*)",
-      "Bash(gh issue view:*)",
-      "Bash(gh issue list:*)",
-      "Bash(gh issue comment:*)",
-      "Bash(gh issue edit:*)",
-      "Bash(gh pr view:*)",
-      "Bash(gh pr checks:*)",
-      "Bash(gh run view:*)",
-      "Bash(gh run list:*)"
+      "Bash(./packaging/tests/evidence-whitespace-check.sh:*)"
     ],
     "deny": [
+      "Bash(gh:*)",
       "Bash(gh pr merge:*)",
       "Bash(gh pr ready:*)",
       "Bash(gh pr review:*)",

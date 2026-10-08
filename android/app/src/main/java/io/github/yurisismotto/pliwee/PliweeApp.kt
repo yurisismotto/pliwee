@@ -25,6 +25,7 @@ import io.github.yurisismotto.pliwee.notifications.NotificationPolicy
 import io.github.yurisismotto.pliwee.notifications.NotificationSecret
 import io.github.yurisismotto.pliwee.notifications.NotificationSource
 import io.github.yurisismotto.pliwee.pairing.QrPayload
+import io.github.yurisismotto.pliwee.store.AddressHint
 import io.github.yurisismotto.pliwee.store.PeerTarget
 import io.github.yurisismotto.pliwee.store.TrustStore
 import java.net.InetSocketAddress
@@ -362,14 +363,17 @@ class PliweeApp : Application() {
         peer: TrustStore.TrustedPeer,
         round: Int = 1,
     ): List<InetSocketAddress> {
-        val remembered = peer.addresses.mapNotNull(Endpoints::parse)
+        val remembered = peer.dialAddresses()
         if (round <= 1 && remembered.isNotEmpty()) return remembered
 
         val found = discover(peer.deviceId) ?: return remembered
         // Which service type(s) announced it decides the profile it is
         // dialled with — for these addresses and the remembered ones alike.
         peerProfiles.learnedFromDiscovery(peer.fingerprint.toHex(), found.profile)
-        return remembered + found.addresses
+        // Not `remembered + found`: several remembered hints could then fill
+        // the round ahead of the address discovery just saw. See
+        // [Endpoints.withDiscovered].
+        return Endpoints.withDiscovered(remembered, found.addresses)
     }
 
     /**
@@ -539,13 +543,14 @@ class PliweeApp : Application() {
             when (result) {
                 is ConnectResult.Established -> {
                     val connection = result.connection
+                    val pairedAt = System.currentTimeMillis() / 1000
                     val peer = TrustStore.TrustedPeer(
                         deviceId = connection.peerDevice.deviceId,
                         deviceName = TrustStore.sanitizeDeviceName(
                             connection.peerDevice.deviceName,
                         ),
                         fingerprint = payload.fingerprint,
-                        pairedAtUnix = System.currentTimeMillis() / 1000,
+                        pairedAtUnix = pairedAt,
                         // What the desktop advertises is what both sides
                         // *support*, not what either has authorized. The
                         // sensitive capabilities — `clipboard.v1` and
@@ -561,7 +566,9 @@ class PliweeApp : Application() {
                         // cannot escalate even if this line is one day wrong.
                         grantedCapabilities = connection.negotiatedCapabilities
                             .toSet() - SensitiveCapabilities.NEVER_AUTO_GRANTED,
-                        addresses = listOf(Endpoints.format(address)),
+                        // The address this pinned session just came up at:
+                        // a successful hint, because it is established.
+                        addressHints = listOfNotNull(AddressHint.from(address, pairedAt)),
                     )
                     // Merged, not replaced: a computer paired again keeps
                     // the grants and policies the person set for it. See
