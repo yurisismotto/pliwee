@@ -1,0 +1,3 @@
+# The vendored BIP-39 list is pinned by SHA-256 (see comparison_code.rs).
+# No end-of-line conversion on any platform, so every checkout is byte-exact.
+bip39-english.txt -text

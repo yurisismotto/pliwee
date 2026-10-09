@@ -42,6 +42,7 @@
 //! We use HMAC-SHA256, a standard MAC, keyed by the token. No custom
 //! construction (implementation rule 1).
 
+pub mod comparison_code;
 pub mod text_code;
 
 use std::time::{Duration, Instant};
