@@ -194,6 +194,7 @@ jobs:
         run: |
           $expected = @(
             'address_hints.rs',
+            'duplicate_session.rs',
             'frozen_vectors.rs',
             'identity_and_store.rs',
             'identity_seam.rs',
@@ -267,6 +268,7 @@ jobs:
             --target x86_64-pc-windows-msvc `
             -p pliwee-core `
             --lib `
+            --test duplicate_session `
             --test frozen_vectors `
             --test identity_seam `
             --test notifications_protocol `
